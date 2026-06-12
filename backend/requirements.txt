@@ -1,0 +1,25 @@
+# Core API
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+sqlmodel
+websockets
+aiofiles
+python-multipart
+httpx
+
+# OpenFOAM interaction
+foamlib
+docker
+
+# Geometry (OpenCascade kernel)
+cadquery
+
+# Meshing
+gmsh
+
+# Post-processing
+pyvista
+numpy
+scipy
