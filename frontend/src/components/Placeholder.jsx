@@ -1,12 +1,6 @@
 import { Construction } from "lucide-react";
 
-interface PlaceholderProps {
-  title: string;
-  description: string;
-  phase: string;
-}
-
-export function Placeholder({ title, description, phase }: PlaceholderProps) {
+export function Placeholder({ title, description, phase }) {
   return (
     <div>
       <h1 className="text-3xl font-bold m-0 mb-2">{title}</h1>

@@ -67,7 +67,7 @@ Geometry → Mesh → Physics → Boundary Conditions → Numerics → Validate 
 ### Frontend
 | Concern | Tech |
 |---------|------|
-| Framework | React 19 + TypeScript + Vite |
+| Framework | React 19 + JavaScript (JSX) + Vite |
 | Styling | Tailwind CSS v4 |
 | State | Zustand |
 | Server state | TanStack Query |

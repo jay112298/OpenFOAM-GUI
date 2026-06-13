@@ -46,7 +46,7 @@ backend/app/
 frontend/src/
   components/  Layout, shared UI
   pages/       Dashboard, Cases, NewCase, CaseView (stage tabs), Sweeps,
-               Templates, Benchmarks, Settings
+               Templates, Benchmarks, Settings  (plain JSX, no TypeScript)
   stores/      Zustand state
   lib/         API client, utilities
 ```

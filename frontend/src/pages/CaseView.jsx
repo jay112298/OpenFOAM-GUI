@@ -12,7 +12,7 @@ const stages = [
 ];
 
 export function CaseView() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams();
 
   return (
     <div>
