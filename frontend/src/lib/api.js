@@ -61,6 +61,10 @@ export const api = {
   // results
   forces: (caseId) => request(`/results/${caseId}/forces`),
 
+  // benchmarks
+  listBenchmarks: () => request("/benchmarks/"),
+  getBenchmark: (id) => request(`/benchmarks/${id}`),
+
   // sweeps
   listSweeps: () => request("/sweeps/"),
   createSweep: (base_case_id, values, parameter, name) =>

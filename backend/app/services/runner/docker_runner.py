@@ -45,9 +45,11 @@ class DockerRunner:
 
     def submit(self, case_dir: Path, command: str = "./Allrun") -> str:
         client = get_client()
+        # The image's login shell resets cwd to $HOME, so cd into the bind mount.
+        full = f"cd /data && {command}"
         container = client.containers.run(
             self.image,
-            command=["/bin/bash", "-lc", command],
+            command=["/bin/bash", "-lc", full],
             volumes={str(case_dir.resolve()): {"bind": "/data", "mode": "rw"}},
             working_dir="/data",
             detach=True,

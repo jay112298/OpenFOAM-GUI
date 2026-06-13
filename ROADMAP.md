@@ -13,6 +13,17 @@ Architecture and locked product decisions live in [PLAN.md](PLAN.md) — read th
 polar that matches published data. This proves the pipeline pattern every other
 domain will reuse.
 
+**Status (2026-06-13): pipeline functional end-to-end.** All milestones built and
+the full chain (NACA generate → blockMesh → snappyHexMesh → checkMesh → simpleFoam →
+forceCoeffs) was executed in the real `opencfd/openfoam-run:latest` container and
+parsed successfully. Backend: 12 tests passing, ruff clean. Frontend: builds, eslint
+clean. **Remaining for benchmark-grade accuracy (the exit criterion):** the default
+2D snappy mesh is coarse and not perfectly 2D-clean (checkMesh warns on empty-patch
+alignment / concave cells), and a quick 50-iteration run gives Cl/Cd off published
+values. Closing the benchmark needs mesh refinement, a clean 2D workflow
+(extrudeMesh from a one-cell patch), and full convergence (~2000 iters). Tracked as
+follow-up `fix/airfoil-2d-mesh` + `feature/benchmark-naca0012` tuning.
+
 | # | Milestone | Branch | Deliverable |
 |---|-----------|--------|-------------|
 | 1.1 | Case spec + storage | `feature/case-spec` | Pydantic CaseSpec stages, SQLite persistence, case CRUD wired to UI |
