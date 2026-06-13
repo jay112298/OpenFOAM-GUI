@@ -42,18 +42,16 @@ class AirfoilParams:
     fluid: str = "air"
     turbulence_model: str = "kOmegaSST"
     turbulence_intensity: float = 0.05
-    # domain extent in chord lengths
-    upstream: float = 10.0
-    downstream: float = 20.0
-    vertical: float = 10.0
-    # mesh
-    base_cell: float = 0.5          # background cell size [m]
-    surface_refine: int = 5         # snappy surface refinement level
-    n_layers: int = 8
-    target_yplus: float = 30.0      # wall-function band
+    # mesh (Gmsh 2D C-mesh)
+    farfield_radius: float = 15.0   # far-field circle radius in chords
+    n_layers: int = 25              # boundary-layer cells
+    layer_expansion: float = 1.2
+    target_yplus: float = 30.0      # wall-function band (robust isotropic mesh)
+    span: float = 0.05              # 2D span thickness [m]
     # numerics
     end_time: int = 2000
     write_interval: int = 200
+    n_procs: int = 1                # parallel cores (1 = serial)
 
     @classmethod
     def from_spec(cls, spec: dict) -> "AirfoilParams":
@@ -70,15 +68,14 @@ class AirfoilParams:
         out.fluid = p.get("fluid", {}).get("name", out.fluid)
         out.turbulence_model = p.get("turbulence_model", out.turbulence_model)
         out.turbulence_intensity = ref.get("turbulence_intensity", out.turbulence_intensity)
-        out.upstream = m.get("upstream", out.upstream)
-        out.downstream = m.get("downstream", out.downstream)
-        out.vertical = m.get("vertical", out.vertical)
-        out.base_cell = m.get("base_cell", out.base_cell)
-        out.surface_refine = m.get("surface_refine", out.surface_refine)
+        out.farfield_radius = m.get("farfield_radius", out.farfield_radius)
         out.n_layers = m.get("n_layers", out.n_layers)
+        out.layer_expansion = m.get("layer_expansion", out.layer_expansion)
         out.target_yplus = m.get("target_yplus", out.target_yplus)
+        out.span = m.get("span", out.span)
         out.end_time = n.get("end_time", out.end_time)
         out.write_interval = n.get("write_interval", out.write_interval)
+        out.n_procs = n.get("n_procs", out.n_procs)
         return out
 
 
@@ -131,102 +128,43 @@ def build_case(spec: dict, case_dir: Path) -> DerivedState:
     for sub in ("system", "constant/triSurface", "0"):
         (case_dir / sub).mkdir(parents=True, exist_ok=True)
 
-    # --- geometry STL ---
-    airfoil = naca.generate(params.designation, params.chord)
-    naca.export_stl(airfoil, case_dir / "constant/triSurface/airfoil.stl", span=params.base_cell)
+    # --- geometry + clean 2D Gmsh mesh ---
+    airfoil = naca.generate(params.designation, params.chord, n=200)
+    naca.export_stl(airfoil, case_dir / "constant/triSurface/airfoil.stl", span=params.span)
+    _write_mesh(case_dir, params, st, airfoil)
 
-    _write_block_mesh(case_dir, params, airfoil)
-    _write_snappy(case_dir, params)
     _write_control_dict(case_dir, params, st)
     _write_fv_schemes(case_dir)
     _write_fv_solution(case_dir)
     _write_transport(case_dir, st)
     _write_turbulence(case_dir, params)
     _write_fields(case_dir, params, st)
-    _write_allrun(case_dir)
+    if params.n_procs > 1:
+        _write_decompose_par(case_dir, params)
+    _write_allrun(case_dir, params)
     return st
 
 
-def _write_block_mesh(case_dir: Path, p: AirfoilParams, airfoil: naca.Airfoil) -> None:
-    c = p.chord
-    x0, x1 = -p.upstream * c, p.downstream * c
-    y0, y1 = -p.vertical * c, p.vertical * c
-    z0, z1 = 0.0, p.base_cell  # thin span (2D)
+def _write_mesh(case_dir: Path, p: AirfoilParams, st: DerivedState, airfoil: naca.Airfoil) -> None:
+    """Generate a clean 2D Gmsh C-mesh (.msh) -> converted by gmshToFoam in Allrun."""
+    from app.services.meshing.gmsh_airfoil import build_mesh
 
-    nx = max(int((x1 - x0) / p.base_cell), 20)
-    ny = max(int((y1 - y0) / p.base_cell), 20)
-
-    f = FoamFile(case_dir / "system/blockMeshDict")
-    f["scale"] = 1
-    f["vertices"] = [
-        [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
-        [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
-    ]
-    f["blocks"] = [
-        "hex", [0, 1, 2, 3, 4, 5, 6, 7], [nx, ny, 1], "simpleGrading", [1, 1, 1]
-    ]
-    f["edges"] = []
-    f["boundary"] = [
-        ("farfield", {"type": "patch", "faces": [
-            [0, 4, 7, 3],  # left
-            [1, 2, 6, 5],  # right
-            [3, 7, 6, 2],  # top
-            [0, 1, 5, 4],  # bottom
-        ]}),
-        ("frontAndBack", {"type": "empty", "faces": [
-            [0, 3, 2, 1],  # back (z0)
-            [4, 5, 6, 7],  # front (z1)
-        ]}),
-    ]
-    f["mergePatchPairs"] = []
+    build_mesh(
+        airfoil.coordinates,
+        chord=p.chord,
+        first_layer=st.first_cell_height,
+        n_layers=p.n_layers,
+        expansion=p.layer_expansion,
+        farfield_radius=p.farfield_radius,
+        span=p.span,
+        out_path=case_dir / "airfoil.msh",
+    )
 
 
-def _write_snappy(case_dir: Path, p: AirfoilParams) -> None:
-    f = FoamFile(case_dir / "system/snappyHexMeshDict")
-    f["castellatedMesh"] = True
-    f["snap"] = True
-    f["addLayers"] = True
-    f["geometry"] = {
-        "airfoil.stl": {"type": "triSurfaceMesh", "name": "airfoil"}
-    }
-    f["castellatedMeshControls"] = {
-        "maxLocalCells": 1000000,
-        "maxGlobalCells": 4000000,
-        "minRefinementCells": 10,
-        "nCellsBetweenLevels": 3,
-        "features": [],
-        "refinementSurfaces": {
-            "airfoil": {"level": [p.surface_refine, p.surface_refine], "patchInfo": {"type": "wall"}}
-        },
-        "resolveFeatureAngle": 30,
-        "refinementRegions": {},
-        "locationInMesh": [-p.upstream * p.chord * 0.5, p.vertical * p.chord * 0.5, p.base_cell * 0.5],
-        "allowFreeStandingZoneFaces": True,
-    }
-    f["snapControls"] = {
-        "nSmoothPatch": 3, "tolerance": 2.0, "nSolveIter": 50, "nRelaxIter": 5,
-        "nFeatureSnapIter": 10, "implicitFeatureSnap": True, "explicitFeatureSnap": False,
-    }
-    f["addLayersControls"] = {
-        "relativeSizes": True,
-        "layers": {"airfoil": {"nSurfaceLayers": p.n_layers}},
-        "expansionRatio": 1.2,
-        "finalLayerThickness": 0.5,
-        "minThickness": 0.05,
-        "nGrow": 0, "featureAngle": 60, "nRelaxIter": 5,
-        "nSmoothSurfaceNormals": 1, "nSmoothNormals": 3, "nSmoothThickness": 10,
-        "maxFaceThicknessRatio": 0.5, "maxThicknessToMedialRatio": 0.3,
-        "minMedialAxisAngle": 90, "nBufferCellsNoExtrude": 0,
-        "nLayerIter": 50,
-    }
-    f["meshQualityControls"] = {
-        "maxNonOrtho": 65, "maxBoundarySkewness": 20, "maxInternalSkewness": 4,
-        "maxConcave": 80, "minVol": 1e-13, "minTetQuality": 1e-15, "minArea": -1,
-        "minTwist": 0.02, "minDeterminant": 0.001, "minFaceWeight": 0.05,
-        "minVolRatio": 0.01, "minTriangleTwist": -1, "nSmoothScale": 4,
-        "errorReduction": 0.75,
-    }
-    f["mergeTolerance"] = 1e-6
+def _write_decompose_par(case_dir: Path, p: AirfoilParams) -> None:
+    f = FoamFile(case_dir / "system/decomposeParDict")
+    f["numberOfSubdomains"] = p.n_procs
+    f["method"] = "scotch"
 
 
 def _write_control_dict(case_dir: Path, p: AirfoilParams, st: DerivedState) -> None:
@@ -264,7 +202,7 @@ def _write_control_dict(case_dir: Path, p: AirfoilParams, st: DerivedState) -> N
             "pitchAxis": [0, 0, 1],
             "magUInf": p.velocity,
             "lRef": p.chord,
-            "Aref": p.chord * p.base_cell,
+            "Aref": p.chord * p.span,
         }
     }
 
@@ -368,16 +306,47 @@ def _write_fields(case_dir: Path, p: AirfoilParams, st: DerivedState) -> None:
     }
 
 
-def _write_allrun(case_dir: Path) -> None:
-    script = """#!/bin/sh
-cd "${0%/*}" || exit
-. "${WM_PROJECT_DIR:?}/bin/tools/RunFunctions"
+def _write_allrun(case_dir: Path, p: AirfoilParams) -> None:
+    """Allrun that streams every stage to stdout (via tee) so the GUI terminal
+    shows live mesh + solver output, with optional parallel solve."""
+    n = p.n_procs
+    if n > 1:
+        solve = (
+            f'decomposePar 2>&1 | tee log.decomposePar\n'
+            f'mpirun --allow-run-as-root -np {n} simpleFoam -parallel 2>&1 | tee log.simpleFoam\n'
+            f'reconstructPar -latestTime 2>&1 | tee log.reconstructPar\n'
+        )
+    else:
+        solve = "simpleFoam 2>&1 | tee log.simpleFoam\n"
 
-runApplication blockMesh
-runApplication snappyHexMesh -overwrite
-runApplication checkMesh -allTopology -allGeometry
-runApplication renumberMesh -overwrite
-runApplication simpleFoam
+    script = f"""#!/bin/sh
+cd "${{0%/*}}" || exit
+. "${{WM_PROJECT_DIR:?}}/bin/tools/RunFunctions"
+set -e
+
+echo "============================================================"
+echo " OpenFOAM GUI :: airfoil case"
+echo " cores: {n}   turbulence: {p.turbulence_model}   AoA: {p.angle_of_attack} deg"
+echo "============================================================"
+
+echo "[1/5] gmshToFoam — importing 2D mesh"
+gmshToFoam airfoil.msh 2>&1 | tee log.gmshToFoam
+
+echo "[2/5] setting patch types (airfoil=wall, farfield=patch, frontAndBack=empty)"
+foamDictionary constant/polyMesh/boundary -entry entry0/airfoil/type -set wall
+foamDictionary constant/polyMesh/boundary -entry entry0/airfoil/inGroups -set '1(wall)'
+foamDictionary constant/polyMesh/boundary -entry entry0/farfield/type -set patch
+foamDictionary constant/polyMesh/boundary -entry entry0/frontAndBack/type -set empty
+
+echo "[3/5] checkMesh"
+checkMesh -allGeometry -allTopology 2>&1 | tee log.checkMesh
+
+echo "[4/5] renumberMesh"
+renumberMesh -overwrite 2>&1 | tee log.renumberMesh
+
+echo "[5/5] simpleFoam"
+{solve}
+echo "DONE"
 """
     path = case_dir / "Allrun"
     path.write_text(script)

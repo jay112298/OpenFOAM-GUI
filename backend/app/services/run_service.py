@@ -56,7 +56,9 @@ def run_status(session: Session, run_id: str) -> str:
 
 
 async def stream(run_id: str, session: Session):
-    """Yield dict events: {log} and {residual} and {time} for the WebSocket."""
+    """Yield rich dict events for the WebSocket terminal: log lines plus parsed
+    {stage}, {time}, {residual}, {continuity}, {courant}, {forces}, {diverged}.
+    """
     from app.parsers import residuals
 
     run = session.get(Run, run_id)
@@ -64,15 +66,40 @@ async def stream(run_id: str, session: Session):
         yield {"error": "run not found"}
         return
 
+    cl = cd = None
     async for line in _runner.alogs(run.container_id):
         line = line.rstrip("\n")
         yield {"log": line}
+
+        stage = residuals.parse_stage(line)
+        if stage is not None:
+            yield {"stage": stage}
+
         t = residuals.parse_time(line)
         if t is not None:
             yield {"time": t}
+
         pt = residuals.parse_line(line)
         if pt is not None:
             yield {
                 "residual": {"field": pt.field, "initial": pt.initial, "final": pt.final},
                 "diverged": residuals.is_diverged(pt),
             }
+
+        cont = residuals.parse_continuity(line)
+        if cont is not None:
+            yield {"continuity": cont}
+
+        cour = residuals.parse_courant(line)
+        if cour is not None:
+            yield {"courant": cour}
+
+        v = residuals.parse_cl(line)
+        if v is not None:
+            cl = v
+        v = residuals.parse_cd(line)
+        if v is not None:
+            cd = v
+            # Cd is printed last in the forceCoeffs block -> emit the pair
+            if cl is not None:
+                yield {"forces": {"cl": cl, "cd": cd}}
