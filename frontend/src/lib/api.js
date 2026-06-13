@@ -60,6 +60,7 @@ export const api = {
 
   // results
   forces: (caseId) => request(`/results/${caseId}/forces`),
+  openParaview: (caseId) => post(`/results/${caseId}/paraview`),
 
   // benchmarks
   listBenchmarks: () => request("/benchmarks/"),

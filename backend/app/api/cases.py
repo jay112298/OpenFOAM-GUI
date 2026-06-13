@@ -55,8 +55,10 @@ async def update_spec(case_id: str, body: UpdateSpecBody, session: Session = Dep
     return case
 
 
+# sync def -> FastAPI runs it in a threadpool, so the Gmsh subprocess + build
+# don't block the event loop (keeps the run WebSocket responsive).
 @router.post("/{case_id}/generate")
-async def generate(case_id: str, session: Session = Depends(get_session)):
+def generate(case_id: str, session: Session = Depends(get_session)):
     case = _get(session, case_id)
     try:
         return case_service.generate(session, case)

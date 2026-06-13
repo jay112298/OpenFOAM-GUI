@@ -54,6 +54,7 @@ export function Geometry({ field, setField, persist, markDone, goNext }) {
 export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
   const [yp, setYp] = useState(null);
   const [derived, setDerived] = useState(null);
+  const [elapsed, setElapsed] = useState(0);
 
   const calc = useMutation({
     mutationFn: () => api.yplus(field("physics.reference.velocity"), field("geometry.parameters.chord"),
@@ -62,11 +63,19 @@ export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
   });
   const gen = useMutation({
     mutationFn: async () => { await persist(); return api.generate(caseId); },
+    onMutate: () => setElapsed(0),
     onSuccess: (d) => { setDerived(d); markDone("mesh"); },
   });
 
-  const num = (path, label, unit) => (
-    <Field label={label} unit={unit}>
+  // elapsed-time ticker while the mesh generates (gmsh has no progress stream)
+  useEffect(() => {
+    if (!gen.isPending) return;
+    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(t);
+  }, [gen.isPending]);
+
+  const num = (path, label, unit, help) => (
+    <Field label={label} unit={unit} help={help}>
       <Input type="number" value={field(path) ?? ""} onChange={(e) => setField(path, parseFloat(e.target.value))} />
     </Field>
   );
@@ -76,19 +85,20 @@ export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
       <div className="grid grid-cols-2 gap-6">
         <Card>
           <div className="text-sm font-semibold mb-3">Mesh (clean 2D, Gmsh)</div>
-          {num("mesh.parameters.farfield_radius", "Far-field radius", "chords")}
-          {num("mesh.parameters.target_yplus", "Target y+")}
-          {num("numerics.end_time", "Max iterations")}
-          <Field label="CPU cores" help="Parallel solve via decomposePar + mpirun.">
+          {num("mesh.parameters.farfield_radius", "Far-field radius", "chords", "Recommended 15–20. Larger = less blockage, more cells.")}
+          {num("mesh.parameters.target_yplus", "Target y+", "", "Recommended 30–100 (wall functions). ~1 needs anisotropic layers.")}
+          {num("numerics.end_time", "Max iterations", "", "Recommended 1500–3000 for steady convergence.")}
+          <Field label="CPU cores" help="Recommended 2–4 (use physical cores). Parallel via decomposePar + mpirun.">
             <Input type="number" min="1" value={field("numerics.n_procs") ?? 1}
               onChange={(e) => setField("numerics.n_procs", parseInt(e.target.value) || 1)} />
           </Field>
         </Card>
         <div>
           <Card className="mb-4">
-            <div className="text-sm font-semibold mb-3">y+ calculator</div>
+            <div className="text-sm font-semibold mb-1">1. y+ calculator</div>
+            <p className="text-xs text-[var(--muted-foreground)] mb-3">Required before meshing — sizes the near-wall cell.</p>
             <Button variant="ghost" onClick={() => calc.mutate()} disabled={calc.isPending}>
-              Estimate first-cell height
+              {calc.isPending ? "Estimating…" : "Estimate first-cell height"}
             </Button>
             {yp && (
               <div className="grid grid-cols-2 gap-2 mt-3">
@@ -98,17 +108,26 @@ export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
             )}
           </Card>
           <Card>
-            <div className="text-sm font-semibold mb-3">Generate case</div>
-            <Button onClick={() => gen.mutate()} disabled={gen.isPending}>
-              {gen.isPending ? "Generating mesh…" : "Generate OpenFOAM case"}
+            <div className="text-sm font-semibold mb-1">2. Generate case</div>
+            <p className="text-xs text-[var(--muted-foreground)] mb-3">
+              {yp ? "Writes the 2D Gmsh mesh + all OpenFOAM dicts." : "Calculate y+ first to enable."}
+            </p>
+            <Button onClick={() => gen.mutate()} disabled={gen.isPending || !yp}
+              title={!yp ? "Run the y+ calculator first" : ""}>
+              {gen.isPending ? `Generating mesh… ${elapsed}s` : "Generate OpenFOAM case"}
             </Button>
+            {gen.isPending && (
+              <p className="text-xs text-[var(--muted-foreground)] mt-2">
+                Meshing in Gmsh (typically 5–15s)…
+              </p>
+            )}
             {gen.isError && <p className="text-sm text-[var(--destructive)] mt-2">{gen.error.message}</p>}
             {derived && (
               <div className="grid grid-cols-2 gap-2 mt-3">
+                <Stat label="Mesh cells" value={derived.n_cells?.toLocaleString() ?? "—"} />
                 <Stat label="Reynolds" value={derived.reynolds.toExponential(2)} />
                 <Stat label="Mach" value={derived.mach.toFixed(3)} />
                 <Stat label="k inlet" value={derived.k.toFixed(3)} />
-                <Stat label="omega inlet" value={derived.omega.toFixed(2)} />
               </div>
             )}
           </Card>
@@ -126,19 +145,19 @@ export function Physics({ field, setField, markDone, goNext }) {
     <div className="max-w-2xl">
       <Card>
         <div className="text-sm font-semibold mb-3">Flow conditions</div>
-        <Field label="Freestream speed" unit="m/s">
+        <Field label="Freestream speed" unit="m/s" help="Recommended 20–60 for low-speed (keeps Mach < 0.3). Aim for Re ~ 1e6–6e6.">
           <Input type="number" value={field("physics.reference.velocity") ?? ""}
             onChange={(e) => setField("physics.reference.velocity", parseFloat(e.target.value))} />
         </Field>
-        <Field label="Angle of attack" unit="deg" help="Applied by rotating the freestream, not the mesh.">
+        <Field label="Angle of attack" unit="deg" help="Recommended 0–10° (attached flow). Steady RANS is unreliable past ~12° (stall).">
           <Input type="number" value={field("physics.reference.angle_of_attack") ?? ""}
             onChange={(e) => setField("physics.reference.angle_of_attack", parseFloat(e.target.value))} />
         </Field>
-        <Field label="Turbulence intensity" help="Fraction: 0.01 = 1%. External aero: 0.1–1%.">
+        <Field label="Turbulence intensity" help="Recommended 0.001–0.01 (0.1–1%) for external aero. 0.01 is a safe default.">
           <Input type="number" step="0.001" value={field("physics.reference.turbulence_intensity") ?? ""}
             onChange={(e) => setField("physics.reference.turbulence_intensity", parseFloat(e.target.value))} />
         </Field>
-        <Field label="Turbulence model">
+        <Field label="Turbulence model" help="Recommended: kOmegaSST (robust). kOmegaSSTLM adds laminar–turbulent transition.">
           <Select options={["kOmegaSST", "kOmegaSSTLM", "kEpsilon", "realizableKE"]}
             value={field("physics.turbulence_model") ?? "kOmegaSST"}
             onChange={(e) => setField("physics.turbulence_model", e.target.value)} />
@@ -220,13 +239,14 @@ export function Run({ caseId, persist, markDone, goNext }) {
   const [courant, setCourant] = useState(null);
   const [forces, setForces] = useState(null);
   const [finished, setFinished] = useState(false);
+  const [started, setStarted] = useState(false);
   const [error, setError] = useState(null);
   const wsRef = useRef(null);
   const logEnd = useRef(null);
   const iter = useRef(0);
 
   const start = useMutation({
-    mutationFn: async () => { await persist(); return api.startRun(caseId); },
+    mutationFn: async () => { setStarted(true); await persist(); return api.startRun(caseId); },
     onSuccess: (run) => openSocket(run.id),
     onError: (e) => setError(e.message),
   });
@@ -280,8 +300,8 @@ export function Run({ caseId, persist, markDone, goNext }) {
       </div>
       {error && <p className="text-sm text-[var(--destructive)] mt-3">{error}</p>}
 
-      {/* live metrics */}
-      {(time != null || forces || cont || courant) && (
+      {/* live metrics — shown once started */}
+      {started && (
         <div className="grid grid-cols-4 gap-3 mt-5">
           <Stat label="Iteration" value={time ?? "—"} />
           <Stat label="Cl" value={forces ? forces.cl.toFixed(4) : "—"} />
@@ -309,11 +329,14 @@ export function Run({ caseId, persist, markDone, goNext }) {
         </Card>
       )}
 
-      {logs.length > 0 && (
+      {started && (
         <Card className="mt-4">
-          <div className="text-sm font-semibold mb-2">Solver / mesh log</div>
-          <div className="bg-black/50 rounded-lg p-3 h-64 overflow-auto font-mono text-xs text-green-400">
-            {logs.map((l, i) => <div key={i}>{l}</div>)}
+          <div className="text-sm font-semibold mb-2">Solver / mesh console</div>
+          <div className="bg-black/60 rounded-lg p-3 h-72 overflow-auto font-mono text-xs text-green-400">
+            {logs.length === 0 && !error && (
+              <div className="text-[var(--muted-foreground)]">Preparing case and starting container… waiting for output.</div>
+            )}
+            {logs.map((l, i) => <div key={i} className="whitespace-pre-wrap">{l}</div>)}
             <div ref={logEnd} />
           </div>
         </Card>
@@ -327,12 +350,20 @@ export function Run({ caseId, persist, markDone, goNext }) {
 /* ---------------- Results ---------------- */
 export function Results({ caseId }) {
   const load = useMutation({ mutationFn: () => api.forces(caseId) });
+  const paraview = useMutation({ mutationFn: () => api.openParaview(caseId) });
   const data = load.data;
   return (
     <div className="max-w-4xl">
-      <Button onClick={() => load.mutate()} disabled={load.isPending}>
-        {load.isPending ? "Loading…" : "Load force coefficients"}
-      </Button>
+      <div className="flex items-center gap-3">
+        <Button onClick={() => load.mutate()} disabled={load.isPending}>
+          {load.isPending ? "Loading…" : "Load force coefficients"}
+        </Button>
+        <Button variant="ghost" onClick={() => paraview.mutate()} disabled={paraview.isPending}>
+          {paraview.isPending ? "Opening…" : "Open in ParaView"}
+        </Button>
+        {paraview.isError && <span className="text-sm text-[var(--destructive)]">{paraview.error.message}</span>}
+        {paraview.isSuccess && <span className="text-sm text-[var(--success)]">Launched ParaView ✓</span>}
+      </div>
       {data && data.latest && (
         <div className="grid grid-cols-3 gap-3 mt-6">
           <Stat label="Cl (lift)" value={data.latest.cl?.toFixed(4)} />

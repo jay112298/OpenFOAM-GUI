@@ -21,8 +21,10 @@ _RES = re.compile(
 _TIME = re.compile(r"^Time = ([\d.eE+-]+)")
 _CONT = re.compile(r"continuity errors : sum local = ([\d.eE+-]+), global = ([\d.eE+-]+)")
 _COURANT = re.compile(r"Courant Number mean: ([\d.eE+-]+) max: ([\d.eE+-]+)")
-_CL = re.compile(r"^\s*Cl\s*=\s*([\d.eE+-]+)")
-_CD = re.compile(r"^\s*Cd\s*=\s*([\d.eE+-]+)")
+# OF2506 forceCoeffs log: "    Cl:\t0.5547\t..." (colon + tab, columns follow).
+# Match the bare Cl:/Cd: rows, not Cl(f): / Cd(r): etc.
+_CL = re.compile(r"^\s*Cl[:=]\s+([\d.eE+-]+)")
+_CD = re.compile(r"^\s*Cd[:=]\s+([\d.eE+-]+)")
 _STAGE = re.compile(r"^\[(\d+)/(\d+)\]\s*(.+)")
 
 
