@@ -10,8 +10,10 @@ from app.services import run_service
 router = APIRouter()
 
 
+# sync def -> threadpool: regeneration (Gmsh) + container submit won't block the
+# event loop, so the WebSocket stays responsive and start returns promptly.
 @router.post("/{case_id}/start")
-async def start_run(case_id: str, session: Session = Depends(get_session)):
+def start_run(case_id: str, session: Session = Depends(get_session)):
     try:
         return run_service.start_run(session, case_id)
     except PermissionError as exc:

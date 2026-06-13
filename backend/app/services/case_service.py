@@ -44,6 +44,8 @@ def generate(session: Session, case: Case) -> dict:
     d = case_dir(case.id)
     d.mkdir(parents=True, exist_ok=True)
     st = build_case(case.spec, d)
+    ncells_file = d / "airfoil.ncells"
+    n_cells = int(ncells_file.read_text()) if ncells_file.exists() else None
     return {
         "reynolds": st.reynolds,
         "mach": st.mach,
@@ -51,6 +53,7 @@ def generate(session: Session, case: Case) -> dict:
         "omega": st.omega,
         "first_cell_height": st.first_cell_height,
         "velocity_vector": list(st.velocity_vector),
+        "n_cells": n_cells,
     }
 
 

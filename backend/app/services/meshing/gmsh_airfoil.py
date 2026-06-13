@@ -131,6 +131,11 @@ def _run_gmsh(
         gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)  # gmshToFoam wants msh2
         out_path.parent.mkdir(parents=True, exist_ok=True)
         gmsh.write(str(out_path))
+
+        # sidecar with the 3D cell count, for UI feedback
+        _types, tags3d, _ = gmsh.model.mesh.getElements(dim=3)
+        n_cells = sum(len(t) for t in tags3d)
+        out_path.with_suffix(".ncells").write_text(str(n_cells))
     finally:
         gmsh.finalize()
 
