@@ -1,17 +1,32 @@
-"""Mesh stage: blockMesh/snappyHexMesh wizards, y+ calculator, checkMesh gates."""
+"""Mesh stage: y+ calculator now; mesh generation runs via the runner."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from app.services.meshing.yplus import first_cell_height
+from app.services.physics.fluids import get_fluid
 
 router = APIRouter()
 
 
+class YPlusBody(BaseModel):
+    velocity: float
+    length: float
+    fluid: str = "air"
+    target_yplus: float = 30.0
+
+
 @router.post("/yplus")
-async def yplus_calculator():
-    # TODO(phase-1): target y+ -> first cell height (app/services/meshing/yplus.py)
-    return {"todo": "phase-1"}
-
-
-@router.post("/{case_id}/generate")
-async def generate_mesh(case_id: str):
-    # TODO(phase-1): render mesh dicts from spec, run mesher in container, parse checkMesh
-    return {"todo": "phase-1"}
+async def yplus(body: YPlusBody):
+    try:
+        f = get_fluid(body.fluid)
+        est = first_cell_height(body.velocity, body.length, f.nu, f.rho, body.target_yplus)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "first_cell_height": est.first_cell_height,
+        "first_cell_centre": est.first_cell_centre,
+        "cf": est.cf,
+        "u_tau": est.u_tau,
+        "reynolds": est.reynolds,
+    }

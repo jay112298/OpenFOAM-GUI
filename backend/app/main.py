@@ -3,7 +3,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import cases, geometry, meshing, results, runs, sweeps, system, templates, validation
+from app.api import (
+    benchmarks,
+    cases,
+    geometry,
+    meshing,
+    results,
+    runs,
+    sweeps,
+    system,
+    templates,
+    validation,
+)
 from app.config import settings
 from app.db import init_db
 
@@ -33,3 +44,4 @@ app.include_router(validation.router, prefix="/api/validation", tags=["validatio
 app.include_router(runs.router, prefix="/api/runs", tags=["runs"])
 app.include_router(results.router, prefix="/api/results", tags=["results"])
 app.include_router(sweeps.router, prefix="/api/sweeps", tags=["sweeps"])
+app.include_router(benchmarks.router, prefix="/api/benchmarks", tags=["benchmarks"])
