@@ -43,7 +43,7 @@ def test_build_case_writes_files(tmp_path):
     }
     build_case(spec, tmp_path)
     for f in ["system/controlDict", "system/fvSchemes", "system/fvSolution",
-              "system/blockMeshDict", "system/snappyHexMeshDict",
+              "airfoil.msh",
               "constant/transportProperties", "constant/turbulenceProperties",
               "constant/triSurface/airfoil.stl", "0/U", "0/p", "0/k", "0/omega", "0/nut",
               "Allrun"]:

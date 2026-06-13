@@ -13,16 +13,19 @@ Architecture and locked product decisions live in [PLAN.md](PLAN.md) — read th
 polar that matches published data. This proves the pipeline pattern every other
 domain will reuse.
 
-**Status (2026-06-13): pipeline functional end-to-end.** All milestones built and
-the full chain (NACA generate → blockMesh → snappyHexMesh → checkMesh → simpleFoam →
-forceCoeffs) was executed in the real `opencfd/openfoam-run:latest` container and
-parsed successfully. Backend: 12 tests passing, ruff clean. Frontend: builds, eslint
-clean. **Remaining for benchmark-grade accuracy (the exit criterion):** the default
-2D snappy mesh is coarse and not perfectly 2D-clean (checkMesh warns on empty-patch
-alignment / concave cells), and a quick 50-iteration run gives Cl/Cd off published
-values. Closing the benchmark needs mesh refinement, a clean 2D workflow
-(extrudeMesh from a one-cell patch), and full convergence (~2000 iters). Tracked as
-follow-up `fix/airfoil-2d-mesh` + `feature/benchmark-naca0012` tuning.
+**Status (2026-06-13): pipeline functional end-to-end; lift validated.** Full chain
+(NACA generate → Gmsh 2D mesh → gmshToFoam → checkMesh → simpleFoam → forceCoeffs)
+runs in the real `opencfd/openfoam-run:latest` container. The dirty snappy thin-slab
+mesh was replaced with a clean 2D Gmsh C-mesh — `checkMesh` now reports **Mesh OK**.
+NACA0012 at α=5°, Re 2e6: **Cl = 0.555 vs published ~0.54 (within 3%)**. Multi-core
+solve (decomposePar + mpirun) verified. Backend 12 tests pass, ruff clean; frontend
+builds, eslint clean.
+
+**Known limitation (open):** drag is over-predicted (Cd ≈ 0.024 vs ~0.009) because
+the mesh uses isotropic near-wall cells with wall functions, not anisotropic prism
+layers — Gmsh's BoundaryLayer field + OCC structured extrude produced degenerate
+cells, so it was dropped for robustness. Recovering benchmark-grade Cd needs stable
+anisotropic layers (y+ ~1) — tracked as follow-up `feature/airfoil-bl-layers`.
 
 | # | Milestone | Branch | Deliverable |
 |---|-----------|--------|-------------|

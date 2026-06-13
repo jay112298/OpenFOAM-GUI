@@ -114,21 +114,14 @@ def scheme_solver_compat(ctx: "ValidationContext") -> Finding | None:
 
 
 def domain_size(ctx: "ValidationContext") -> Finding | None:
-    p = ctx.params
-    issues = []
-    if p.upstream < 5:
-        issues.append(f"upstream {p.upstream:g}c (<5c)")
-    if p.downstream < 10:
-        issues.append(f"downstream {p.downstream:g}c (<10c)")
-    if p.vertical < 5:
-        issues.append(f"vertical {p.vertical:g}c (<5c)")
-    if issues:
+    r = ctx.params.farfield_radius
+    if r < 10:
         return Finding(
             "domain-size", Severity.warn,
-            "Far-field boundary is close to the body: " + ", ".join(issues) + ".",
-            "Use >=10c upstream/above and >=20c downstream to avoid blockage effects.",
+            f"Far-field radius {r:g}c is close to the body (<10c).",
+            "Use >=15c far-field radius to avoid blockage effects on Cl/Cd.",
         )
-    return Finding("domain-size", Severity.ok, "Far-field domain is large enough to avoid blockage.")
+    return Finding("domain-size", Severity.ok, f"Far-field radius {r:g}c avoids blockage.")
 
 
 def aoa_range(ctx: "ValidationContext") -> Finding | None:

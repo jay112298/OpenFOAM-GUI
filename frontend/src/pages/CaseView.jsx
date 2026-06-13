@@ -1,17 +1,19 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { Lock } from "lucide-react";
 import { api, setSpecPath, getSpecPath } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Geometry, Mesh, Physics, Validate, Run, Results } from "./stages";
 
+// each stage gates the next: you can't open a stage until the previous is complete
 const STAGES = [
-  { key: "geometry", label: "Geometry", Comp: Geometry },
-  { key: "mesh", label: "Mesh", Comp: Mesh },
-  { key: "physics", label: "Physics & BCs", Comp: Physics },
-  { key: "validate", label: "Validate", Comp: Validate },
-  { key: "run", label: "Run", Comp: Run },
-  { key: "results", label: "Results", Comp: Results },
+  { key: "geometry", label: "Geometry", Comp: Geometry, gate: "Preview the section first" },
+  { key: "mesh", label: "Mesh", Comp: Mesh, gate: "Generate the mesh first" },
+  { key: "physics", label: "Physics & BCs", Comp: Physics, gate: "Set flow conditions" },
+  { key: "validate", label: "Validate", Comp: Validate, gate: "Pass preflight (no FAIL)" },
+  { key: "run", label: "Run", Comp: Run, gate: "Finish the solve" },
+  { key: "results", label: "Results", Comp: Results, gate: "" },
 ];
 
 export function CaseView() {
@@ -21,11 +23,7 @@ export function CaseView() {
     queryFn: () => api.getCase(id),
     retry: false,
   });
-
-  if (!caseData) {
-    return <div className="text-[var(--muted-foreground)]">Loading case…</div>;
-  }
-  // key by id so the editor remounts (and re-seeds its spec) when the case changes
+  if (!caseData) return <div className="text-[var(--muted-foreground)]">Loading case…</div>;
   return <Pipeline key={caseData.id} caseData={caseData} />;
 }
 
@@ -33,12 +31,18 @@ function Pipeline({ caseData }) {
   const id = caseData.id;
   const [active, setActive] = useState("geometry");
   const [spec, setSpec] = useState(caseData.spec);
+  const [done, setDone] = useState({}); // stage key -> bool
 
   const setField = (path, value) => setSpec((s) => setSpecPath(s, path, value));
   const field = (path) => getSpecPath(spec, path);
   const persist = () => api.updateSpec(id, spec);
+  const markDone = useCallback((key, ok = true) => setDone((d) => ({ ...d, [key]: ok })), []);
 
-  const Active = STAGES.find((s) => s.key === active).Comp;
+  // a stage is unlocked if it's the first, or every earlier stage is done
+  const unlocked = (idx) => idx === 0 || STAGES.slice(0, idx).every((s) => done[s.key]);
+
+  const activeIdx = STAGES.findIndex((s) => s.key === active);
+  const Active = STAGES[activeIdx].Comp;
 
   return (
     <div>
@@ -48,23 +52,42 @@ function Pipeline({ caseData }) {
       </p>
 
       <div className="flex gap-1 border-b border-[var(--border)] mb-8">
-        {STAGES.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => setActive(s.key)}
-            className={cn(
-              "px-4 py-2.5 text-sm font-medium cursor-pointer border-b-2 -mb-px",
-              active === s.key
-                ? "border-[var(--primary)] text-[var(--foreground)]"
-                : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-            )}
-          >
-            {s.label}
-          </button>
-        ))}
+        {STAGES.map((s, i) => {
+          const locked = !unlocked(i);
+          return (
+            <button
+              key={s.key}
+              onClick={() => !locked && setActive(s.key)}
+              disabled={locked}
+              title={locked ? STAGES[i - 1]?.gate : ""}
+              className={cn(
+                "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5",
+                locked ? "cursor-not-allowed text-[var(--muted)]" : "cursor-pointer",
+                active === s.key
+                  ? "border-[var(--primary)] text-[var(--foreground)]"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              {locked && <Lock className="w-3 h-3" />}
+              {done[s.key] && !locked && <span className="text-[var(--success)]">✓</span>}
+              {s.label}
+            </button>
+          );
+        })}
       </div>
 
-      <Active caseId={id} spec={spec} field={field} setField={setField} persist={persist} />
+      <Active
+        caseId={id}
+        spec={spec}
+        field={field}
+        setField={setField}
+        persist={persist}
+        markDone={markDone}
+        goNext={() => {
+          const next = STAGES[activeIdx + 1];
+          if (next) setActive(next.key);
+        }}
+      />
     </div>
   );
 }
