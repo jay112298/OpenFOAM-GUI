@@ -1,108 +1,70 @@
-import { useParams, NavLink, Routes, Route, Navigate } from "react-router-dom";
+import { useState } from "react";
+import { useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api, setSpecPath, getSpecPath } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Placeholder } from "@/components/Placeholder";
+import { Geometry, Mesh, Physics, Validate, Run, Results } from "./stages";
 
-const stages = [
-  { path: "geometry", label: "Geometry" },
-  { path: "mesh", label: "Mesh" },
-  { path: "physics", label: "Physics & BCs" },
-  { path: "validate", label: "Validate" },
-  { path: "run", label: "Run" },
-  { path: "results", label: "Results" },
+const STAGES = [
+  { key: "geometry", label: "Geometry", Comp: Geometry },
+  { key: "mesh", label: "Mesh", Comp: Mesh },
+  { key: "physics", label: "Physics & BCs", Comp: Physics },
+  { key: "validate", label: "Validate", Comp: Validate },
+  { key: "run", label: "Run", Comp: Run },
+  { key: "results", label: "Results", Comp: Results },
 ];
 
 export function CaseView() {
   const { id } = useParams();
+  const { data: caseData } = useQuery({
+    queryKey: ["case", id],
+    queryFn: () => api.getCase(id),
+    retry: false,
+  });
+
+  if (!caseData) {
+    return <div className="text-[var(--muted-foreground)]">Loading case…</div>;
+  }
+  // key by id so the editor remounts (and re-seeds its spec) when the case changes
+  return <Pipeline key={caseData.id} caseData={caseData} />;
+}
+
+function Pipeline({ caseData }) {
+  const id = caseData.id;
+  const [active, setActive] = useState("geometry");
+  const [spec, setSpec] = useState(caseData.spec);
+
+  const setField = (path, value) => setSpec((s) => setSpecPath(s, path, value));
+  const field = (path) => getSpecPath(spec, path);
+  const persist = () => api.updateSpec(id, spec);
+
+  const Active = STAGES.find((s) => s.key === active).Comp;
 
   return (
     <div>
-      <h1 className="text-3xl font-bold m-0 mb-1">Case {id}</h1>
-      <p className="text-[var(--muted-foreground)] mt-0 mb-6">
-        Pipeline: every stage must be green before Run unlocks.
+      <h1 className="text-2xl font-bold m-0 mb-1">{caseData.name}</h1>
+      <p className="text-[var(--muted-foreground)] mt-0 mb-6 font-mono text-xs">
+        {id} · {caseData.domain} · status: {caseData.status}
       </p>
 
       <div className="flex gap-1 border-b border-[var(--border)] mb-8">
-        {stages.map((s) => (
-          <NavLink
-            key={s.path}
-            to={s.path}
-            className={({ isActive }) =>
-              cn(
-                "px-4 py-2.5 text-sm font-medium no-underline border-b-2 -mb-px",
-                isActive
-                  ? "border-[var(--primary)] text-[var(--foreground)]"
-                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )
-            }
+        {STAGES.map((s) => (
+          <button
+            key={s.key}
+            onClick={() => setActive(s.key)}
+            className={cn(
+              "px-4 py-2.5 text-sm font-medium cursor-pointer border-b-2 -mb-px",
+              active === s.key
+                ? "border-[var(--primary)] text-[var(--foreground)]"
+                : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            )}
           >
             {s.label}
-          </NavLink>
+          </button>
         ))}
       </div>
 
-      <Routes>
-        <Route index element={<Navigate to="geometry" replace />} />
-        <Route
-          path="geometry"
-          element={
-            <Placeholder
-              title="Geometry"
-              description="Parametric generators (NACA, blades, ducts) and STEP/STL import with 3D preview."
-              phase="Phase 1"
-            />
-          }
-        />
-        <Route
-          path="mesh"
-          element={
-            <Placeholder
-              title="Mesh"
-              description="snappyHexMesh wizard, y+ calculator, boundary layers, checkMesh quality gates."
-              phase="Phase 1"
-            />
-          }
-        />
-        <Route
-          path="physics"
-          element={
-            <Placeholder
-              title="Physics & Boundary Conditions"
-              description="Flow regime, turbulence model, fluid presets, patch-by-patch BCs with auto-computed turbulence inlet values."
-              phase="Phase 1"
-            />
-          }
-        />
-        <Route
-          path="validate"
-          element={
-            <Placeholder
-              title="Preflight Validation"
-              description="Rule engine report: PASS / WARN (overridable, logged) / FAIL (blocks run)."
-              phase="Phase 1"
-            />
-          }
-        />
-        <Route
-          path="run"
-          element={
-            <Placeholder
-              title="Run"
-              description="Job queue, live residuals and force coefficients, divergence auto-detection."
-              phase="Phase 1"
-            />
-          }
-        />
-        <Route
-          path="results"
-          element={
-            <Placeholder
-              title="Results"
-              description="Force coefficients, Cp plots, in-browser field slices (VTK.js), ParaView export."
-              phase="Phase 1"
-            />
-          }
-        />
-      </Routes>
+      <Active caseId={id} spec={spec} field={field} setField={setField} persist={persist} />
     </div>
   );
 }
