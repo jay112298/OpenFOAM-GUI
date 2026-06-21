@@ -84,9 +84,17 @@ export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
     <div className="max-w-4xl">
       <div className="grid grid-cols-2 gap-6">
         <Card>
-          <div className="text-sm font-semibold mb-3">Mesh (clean 2D, Gmsh)</div>
-          {num("mesh.parameters.farfield_radius", "Far-field radius", "chords", "Recommended 15–20. Larger = less blockage, more cells.")}
-          {num("mesh.parameters.target_yplus", "Target y+", "", "Recommended 30–100 (wall functions). ~1 needs anisotropic layers.")}
+          <div className="text-sm font-semibold mb-3">Mesh (clean 2D, Gmsh + prism layers)</div>
+          {num("mesh.parameters.farfield_radius", "Far-field radius", "chords", "Recommended 25–50. Too small inflates pressure drag.")}
+          <label className="flex items-center gap-2 mb-4 cursor-pointer">
+            <input type="checkbox" checked={field("mesh.parameters.boundary_layers") ?? false}
+              onChange={(e) => setField("mesh.parameters.boundary_layers", e.target.checked)} />
+            <span className="text-sm font-medium">Boundary layers</span>
+            <span className="text-xs text-[var(--muted-foreground)]">(resolved y+~1 wall — needed for accurate drag)</span>
+          </label>
+          {(field("mesh.parameters.boundary_layers") ?? false) &&
+            num("mesh.parameters.n_layers", "Number of layers", "", "Prism layers on the wall. Recommended 10–20.")}
+          {num("mesh.parameters.target_yplus", "Target y+", "", "~1 with boundary layers; 30–100 without.")}
           {num("numerics.end_time", "Max iterations", "", "Recommended 1500–3000 for steady convergence.")}
           <Field label="CPU cores" help="Recommended 2–4 (use physical cores). Parallel via decomposePar + mpirun.">
             <Input type="number" min="1" value={field("numerics.n_procs") ?? 1}
@@ -238,6 +246,7 @@ export function Run({ caseId, persist, markDone, goNext }) {
   const [cont, setCont] = useState(null);
   const [courant, setCourant] = useState(null);
   const [forces, setForces] = useState(null);
+  const [layers, setLayers] = useState(null);
   const [finished, setFinished] = useState(false);
   const [started, setStarted] = useState(false);
   const [error, setError] = useState(null);
@@ -265,6 +274,7 @@ export function Run({ caseId, persist, markDone, goNext }) {
       if (m.continuity) setCont(m.continuity);
       if (m.courant) setCourant(m.courant);
       if (m.forces) setForces(m.forces);
+      if (m.layers) setLayers(m.layers);
       if (m.done) { setFinished(true); markDone("run"); }
       if (m.residual) {
         const { field: fld, initial } = m.residual;
@@ -308,6 +318,7 @@ export function Run({ caseId, persist, markDone, goNext }) {
           <Stat label="Cd" value={forces ? forces.cd.toFixed(5) : "—"} />
           <Stat label="Courant max" value={courant ? courant.max.toFixed(2) : "—"} />
           {cont && <Stat label="Continuity (local)" value={cont.local.toExponential(2)} />}
+          {layers && <Stat label="Layer coverage" value={`${layers.coverage.toFixed(0)}%`} />}
         </div>
       )}
 

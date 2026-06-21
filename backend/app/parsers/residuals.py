@@ -26,6 +26,7 @@ _COURANT = re.compile(r"Courant Number mean: ([\d.eE+-]+) max: ([\d.eE+-]+)")
 _CL = re.compile(r"^\s*Cl[:=]\s+([\d.eE+-]+)")
 _CD = re.compile(r"^\s*Cd[:=]\s+([\d.eE+-]+)")
 _STAGE = re.compile(r"^\[(\d+)/(\d+)\]\s*(.+)")
+_LAYERS = re.compile(r"Added (\d+) out of (\d+) cells \(([\d.]+)%\)")
 
 
 @dataclass
@@ -76,6 +77,12 @@ def parse_stage(line: str) -> dict | None:
     if not m:
         return None
     return {"index": int(m.group(1)), "total": int(m.group(2)), "label": m.group(3).strip()}
+
+
+def parse_layer_coverage(line: str) -> float | None:
+    """snappy layer addition: 'Added N out of M cells (P%)' -> P (coverage %)."""
+    m = _LAYERS.search(line)
+    return float(m.group(3)) if m else None
 
 
 def is_diverged(point: ResidualPoint, threshold: float = 1e6) -> bool:

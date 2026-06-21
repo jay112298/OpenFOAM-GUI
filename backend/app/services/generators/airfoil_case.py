@@ -42,11 +42,14 @@ class AirfoilParams:
     fluid: str = "air"
     turbulence_model: str = "kOmegaSST"
     turbulence_intensity: float = 0.05
-    # mesh (Gmsh 2D C-mesh)
-    farfield_radius: float = 15.0   # far-field circle radius in chords
-    n_layers: int = 25              # boundary-layer cells
+    # mesh (Gmsh 2D C-mesh; optional snappy prism layers)
+    # Far-field distance is the dominant drag-accuracy lever: 15c gives Cd~0.024,
+    # 50c gives Cd~0.012 (correct for fully-turbulent RANS). Default large.
+    farfield_radius: float = 50.0   # far-field radius in chords
+    boundary_layers: bool = False   # opt-in prism layers (snappy addLayers); see ROADMAP
+    n_layers: int = 15
     layer_expansion: float = 1.2
-    target_yplus: float = 30.0      # wall-function band (robust isotropic mesh)
+    target_yplus: float = 30.0      # wall-function band for the default (no-layer) mesh
     span: float = 0.05              # 2D span thickness [m]
     # numerics
     end_time: int = 2000
@@ -69,6 +72,7 @@ class AirfoilParams:
         out.turbulence_model = p.get("turbulence_model", out.turbulence_model)
         out.turbulence_intensity = ref.get("turbulence_intensity", out.turbulence_intensity)
         out.farfield_radius = m.get("farfield_radius", out.farfield_radius)
+        out.boundary_layers = m.get("boundary_layers", out.boundary_layers)
         out.n_layers = m.get("n_layers", out.n_layers)
         out.layer_expansion = m.get("layer_expansion", out.layer_expansion)
         out.target_yplus = m.get("target_yplus", out.target_yplus)
@@ -132,6 +136,8 @@ def build_case(spec: dict, case_dir: Path) -> DerivedState:
     airfoil = naca.generate(params.designation, params.chord, n=200)
     naca.export_stl(airfoil, case_dir / "constant/triSurface/airfoil.stl", span=params.span)
     _write_mesh(case_dir, params, st, airfoil)
+    if params.boundary_layers:
+        _write_snappy_layers(case_dir, params, st)
 
     _write_control_dict(case_dir, params, st)
     _write_fv_schemes(case_dir)
@@ -159,6 +165,44 @@ def _write_mesh(case_dir: Path, p: AirfoilParams, st: DerivedState, airfoil: nac
         span=p.span,
         out_path=case_dir / "airfoil.msh",
     )
+
+
+def _write_snappy_layers(case_dir: Path, p: AirfoilParams, st: DerivedState) -> None:
+    """Layer-only snappyHexMesh: adds prism layers to the `airfoil` wall of the
+    already-clean Gmsh mesh (no castellation/snapping). firstLayerThickness is
+    the y+-target first-cell height for a resolved boundary layer.
+    """
+    f = FoamFile(case_dir / "system/snappyHexMeshDict")
+    f["castellatedMesh"] = False
+    f["snap"] = False
+    f["addLayers"] = True
+    f["geometry"] = {}
+    f["castellatedMeshControls"] = {
+        "maxLocalCells": 1000000, "maxGlobalCells": 4000000, "minRefinementCells": 0,
+        "nCellsBetweenLevels": 1, "features": [], "refinementSurfaces": {},
+        "resolveFeatureAngle": 30, "refinementRegions": {},
+        "locationInMesh": [p.farfield_radius * p.chord * 0.5, p.farfield_radius * p.chord * 0.5, p.span * 0.5],
+        "allowFreeStandingZoneFaces": True,
+    }
+    f["snapControls"] = {"nSmoothPatch": 3, "tolerance": 2.0, "nSolveIter": 30, "nRelaxIter": 5}
+    f["addLayersControls"] = {
+        "relativeSizes": False,
+        "layers": {"airfoil": {"nSurfaceLayers": p.n_layers}},
+        "expansionRatio": p.layer_expansion,
+        "firstLayerThickness": st.first_cell_height,
+        "minThickness": st.first_cell_height * 0.1,
+        "nGrow": 0, "featureAngle": 130, "nRelaxIter": 5,
+        "nSmoothSurfaceNormals": 1, "nSmoothNormals": 3, "nSmoothThickness": 10,
+        "maxFaceThicknessRatio": 0.5, "maxThicknessToMedialRatio": 0.3,
+        "minMedialAxisAngle": 90, "nBufferCellsNoExtrude": 0, "nLayerIter": 50,
+    }
+    f["meshQualityControls"] = {
+        "maxNonOrtho": 65, "maxBoundarySkewness": 20, "maxInternalSkewness": 4,
+        "maxConcave": 80, "minVol": 1e-13, "minTetQuality": -1e30, "minArea": -1,
+        "minTwist": 0.02, "minDeterminant": 0.001, "minFaceWeight": 0.05,
+        "minVolRatio": 0.01, "minTriangleTwist": -1, "nSmoothScale": 4, "errorReduction": 0.75,
+    }
+    f["mergeTolerance"] = 1e-6
 
 
 def _write_decompose_par(case_dir: Path, p: AirfoilParams) -> None:
@@ -301,7 +345,9 @@ def _write_fields(case_dir: Path, p: AirfoilParams, st: DerivedState) -> None:
     fn.internal_field = 0.0
     fn.boundary_field = {
         "farfield": {"type": "calculated", "value": 0.0},
-        "airfoil": {"type": "nutkWallFunction", "value": 0.0},
+        # Spalding wall function is continuous across y+ (valid for the resolved
+        # y+~1 boundary layers as well as coarse wall-function meshes).
+        "airfoil": {"type": "nutUSpaldingWallFunction", "value": 0.0},
         "frontAndBack": {"type": "empty"},
     }
 
@@ -319,6 +365,15 @@ def _write_allrun(case_dir: Path, p: AirfoilParams) -> None:
     else:
         solve = "simpleFoam 2>&1 | tee log.simpleFoam\n"
 
+    total = 6 if p.boundary_layers else 5
+    layers_step = ""
+    if p.boundary_layers:
+        layers_step = (
+            f'\necho "[4/{total}] snappyHexMesh — adding {p.n_layers} prism layers"\n'
+            "snappyHexMesh -overwrite 2>&1 | tee log.snappy\n"
+        )
+    check_i, renum_i, solve_i = (3, 5, 6) if p.boundary_layers else (3, 4, 5)
+
     script = f"""#!/bin/sh
 cd "${{0%/*}}" || exit
 . "${{WM_PROJECT_DIR:?}}/bin/tools/RunFunctions"
@@ -329,22 +384,22 @@ echo " OpenFOAM GUI :: airfoil case"
 echo " cores: {n}   turbulence: {p.turbulence_model}   AoA: {p.angle_of_attack} deg"
 echo "============================================================"
 
-echo "[1/5] gmshToFoam — importing 2D mesh"
+echo "[1/{total}] gmshToFoam — importing 2D mesh"
 gmshToFoam airfoil.msh 2>&1 | tee log.gmshToFoam
 
-echo "[2/5] setting patch types (airfoil=wall, farfield=patch, frontAndBack=empty)"
+echo "[2/{total}] setting patch types (airfoil=wall, farfield=patch, frontAndBack=empty)"
 foamDictionary constant/polyMesh/boundary -entry entry0/airfoil/type -set wall
 foamDictionary constant/polyMesh/boundary -entry entry0/airfoil/inGroups -set '1(wall)'
 foamDictionary constant/polyMesh/boundary -entry entry0/farfield/type -set patch
 foamDictionary constant/polyMesh/boundary -entry entry0/frontAndBack/type -set empty
-
-echo "[3/5] checkMesh"
+{layers_step}
+echo "[{check_i}/{total}] checkMesh"
 checkMesh -allGeometry -allTopology 2>&1 | tee log.checkMesh
 
-echo "[4/5] renumberMesh"
+echo "[{renum_i}/{total}] renumberMesh"
 renumberMesh -overwrite 2>&1 | tee log.renumberMesh
 
-echo "[5/5] simpleFoam"
+echo "[{solve_i}/{total}] simpleFoam"
 {solve}
 echo "DONE"
 """
