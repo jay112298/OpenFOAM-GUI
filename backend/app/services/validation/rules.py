@@ -37,6 +37,17 @@ def yplus_wall_treatment(ctx: "ValidationContext") -> Finding | None:
     yp = ctx.params.target_yplus
     model = ctx.params.turbulence_model
     low_re = model in _LOWRE_MODELS
+    # Resolved boundary layers (y+~1) + a continuous (Spalding) wall function are
+    # valid for kOmegaSST, so a low y+ is correct, not a warning.
+    if getattr(ctx.params, "boundary_layers", False):
+        if yp > 5:
+            return Finding(
+                "yplus-wall-treatment", Severity.warn,
+                f"Boundary layers are on (resolved wall) but target y+ is {yp:g}.",
+                "With prism layers, target y+ ~ 1 to resolve the viscous sublayer.",
+            )
+        return Finding("yplus-wall-treatment", Severity.ok,
+                       f"Resolved wall: y+ target {yp:g} with prism layers.")
     if low_re and yp > 5:
         return Finding(
             "yplus-wall-treatment", Severity.warn,

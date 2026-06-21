@@ -75,6 +75,10 @@ async def stream(run_id: str, session: Session):
         if stage is not None:
             yield {"stage": stage}
 
+        cov = residuals.parse_layer_coverage(line)
+        if cov is not None:
+            yield {"layers": {"coverage": cov}}
+
         t = residuals.parse_time(line)
         if t is not None:
             yield {"time": t}

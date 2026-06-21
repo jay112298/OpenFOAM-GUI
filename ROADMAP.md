@@ -21,11 +21,27 @@ NACA0012 at α=5°, Re 2e6: **Cl = 0.555 vs published ~0.54 (within 3%)**. Multi
 solve (decomposePar + mpirun) verified. Backend 12 tests pass, ruff clean; frontend
 builds, eslint clean.
 
-**Known limitation (open):** drag is over-predicted (Cd ≈ 0.024 vs ~0.009) because
-the mesh uses isotropic near-wall cells with wall functions, not anisotropic prism
-layers — Gmsh's BoundaryLayer field + OCC structured extrude produced degenerate
-cells, so it was dropped for robustness. Recovering benchmark-grade Cd needs stable
-anisotropic layers (y+ ~1) — tracked as follow-up `feature/airfoil-bl-layers`.
+**Drag accuracy — investigated and largely resolved (2026-06-13).** A study of the
+NACA0012 Cd over-prediction found the dominant lever was **far-field distance**, not
+near-wall layers:
+
+| Far-field | Cl | Cd | note |
+|-----------|----|----|------|
+| 15c | 0.55 | 0.024 | small domain inflates pressure drag |
+| 50c | 0.50 | 0.012 | correct for fully-turbulent RANS |
+
+Published NACA0012 at α=5°, Re 2e6: Cl≈0.54, Cd≈0.009 (free transition) or ≈0.012
+(fully turbulent). The shipped default (far-field 50c, kOmegaSST + Spalding wall
+function) gives **Cl 0.50, Cd 0.012 — both in the correct fully-turbulent RANS
+range.** Remaining ~8% Cl deficit and the gap to free-transition Cd would need a
+transition model (kOmegaSSTLM) + mesh-independence study.
+
+**Boundary layers — built, opt-in, not default.** snappy `addLayers` on the Gmsh
+mesh works (99% coverage at 15 layers) but is unreliable (0% at other sizings) and
+in tests did not improve the benchmark (sometimes hurt Cl), because covering the
+turbulent BL thickness needs the prism stack matched to the base-cell size. Kept as
+an opt-in toggle; making it robust is follow-up `feature/airfoil-bl-tuning`
+(layer/base-cell matching + transition model).
 
 | # | Milestone | Branch | Deliverable |
 |---|-----------|--------|-------------|
