@@ -36,12 +36,26 @@ function) gives **Cl 0.50, Cd 0.012 — both in the correct fully-turbulent RANS
 range.** Remaining ~8% Cl deficit and the gap to free-transition Cd would need a
 transition model (kOmegaSSTLM) + mesh-independence study.
 
-**Boundary layers — built, opt-in, not default.** snappy `addLayers` on the Gmsh
-mesh works (99% coverage at 15 layers) but is unreliable (0% at other sizings) and
-in tests did not improve the benchmark (sometimes hurt Cl), because covering the
-turbulent BL thickness needs the prism stack matched to the base-cell size. Kept as
-an opt-in toggle; making it robust is follow-up `feature/airfoil-bl-tuning`
-(layer/base-cell matching + transition model).
+**Boundary layers — now reliable (2026-09-10).** The earlier "0% layers added"
+failures were snappy silently refusing when the prism stack was thicker than the
+surface cell it had to carve them from. Fixed by keeping the surface cell at its
+resolution-driven size and capping the layer count to fit (`fitted_n_layers`);
+coverage is now ~99% and accuracy is unchanged from the best no-layer config:
+
+| Config (NACA0012, α=5°, Re 2e6, far-field 50c) | Cl | Cd | Layers |
+|---|---|---|---|
+| fine mesh, no layers | 0.499 | 0.0125 | — |
+| coarsened to fit layers (rejected) | 0.472 | 0.0204 | 98% |
+| **fine mesh + 12 fitted layers** | **0.499** | **0.0125** | **99.3%** |
+
+**Transition model (kOmegaSSTLM) — implemented, not yet a Cd win.** gammaInt +
+ReThetat fields, Langtry–Menter inlet correlation, schemes/solvers, and a preflight
+warning when the mesh isn't wall-resolved. On the wall-resolved mesh above it gives
+Cl 0.4994 / Cd 0.01253 — indistinguishable from fully turbulent, i.e. the boundary
+layer trips almost immediately at this Re with Tu = 1%. Closing the remaining gap to
+the free-transition reference (Cd ≈ 0.009, Cl ≈ 0.54) needs a lower inlet turbulence
+intensity (~0.05–0.1%, wind-tunnel-like) and a mesh-independence study — follow-up
+`feature/transition-tuning`.
 
 | # | Milestone | Branch | Deliverable |
 |---|-----------|--------|-------------|

@@ -40,6 +40,30 @@ for upcoming development.
 | WebSocket teardown raised `Cannot call "send" once a close message has been sent` whenever a client navigated away mid-stream. | [fixed] guarded sends/close |
 | Sweep queue progress did not update while the browser tab was unfocused (TanStack pauses polling in background). | [fixed] `refetchIntervalInBackground` |
 
+## Incident — app data directory deleted (2026-09-10)
+
+A throwaway test script used `rm -rf "$HOME/.openfoam-gui/$NAME"`. In zsh an
+unquoted `$cfg` is **not** word-split, so `set -- $cfg; NAME=$2` left `NAME`
+empty and the command became `rm -rf "$HOME/.openfoam-gui/"`. That destroyed
+every case directory and `ofgui.db`.
+
+- Lost: all case dirs (meshes, logs, results) and all case/run/sweep records.
+  Dev/test data only, but unrecoverable.
+- Not affected: `~/CFD` (the real OpenFOAM work), the git repo, all code.
+
+Process fixes:
+1. Never `rm -rf` a path built from a shell variable; delete literal paths, or
+   guard with `[ -n "$NAME" ] || exit 1`.
+2. Scratch work belongs in the session scratchpad, not under the app data dir.
+
+Product follow-up worth doing (turns this class of loss into a non-event):
+
+| Idea | Why |
+|------|-----|
+| Case archive/export (zip a case: spec + mesh + results) | Lets a user snapshot work before risky changes |
+| Soft delete / trash for cases | The delete confirm helps, but there's still no undo |
+| Data dir shown in Settings | Right now nothing in the UI says where cases live |
+
 ## P2 — polish
 
 | # | Finding | Suggested fix |
