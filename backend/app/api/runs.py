@@ -44,7 +44,6 @@ async def run_stream(websocket: WebSocket, run_id: str):
     try:
         async for event in run_service.stream(run_id, session):
             await websocket.send_json(event)
-        await websocket.send_json({"done": True})
     except WebSocketDisconnect:
         pass
     except Exception as exc:  # noqa: BLE001

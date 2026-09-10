@@ -66,6 +66,12 @@ def generate(case_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=400, detail=f"Generation failed: {exc}")
 
 
+@router.get("/{case_id}/mesh-log")
+async def mesh_log(case_id: str):
+    """Live tail of the Gmsh meshing log (polled by the Mesh tab while generating)."""
+    return case_service.mesh_log(case_id)
+
+
 @router.get("/{case_id}/validate")
 async def validate(case_id: str, session: Session = Depends(get_session)):
     case = _get(session, case_id)

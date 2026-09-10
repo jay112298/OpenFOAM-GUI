@@ -95,6 +95,7 @@ class DerivedState:
     nu: float
     first_cell_height: float
     params: AirfoilParams = field(repr=False, default=None)  # type: ignore
+    mesh_reused: bool = False  # True when an up-to-date mesh was kept
 
 
 def derive(params: AirfoilParams) -> DerivedState:
@@ -124,18 +125,49 @@ def _header(path: Path, class_: str, object_: str, location: str) -> FoamFile:
     return f
 
 
-def build_case(spec: dict, case_dir: Path) -> DerivedState:
-    """Write a complete OpenFOAM case for `spec` into `case_dir`. Returns derived state."""
+def _mesh_signature(p: AirfoilParams, st: DerivedState) -> str:
+    """Hash of everything that changes the Gmsh mesh. Physics changes that only
+    touch fields/dicts don't invalidate the (slow) mesh."""
+    import hashlib
+    import json
+
+    key = {
+        "designation": p.designation,
+        "chord": p.chord,
+        "farfield_radius": p.farfield_radius,
+        "span": p.span,
+        "first_cell": float(f"{st.first_cell_height:.3g}"),
+    }
+    return hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()
+
+
+def build_case(spec: dict, case_dir: Path, force_mesh: bool = True) -> DerivedState:
+    """Write a complete OpenFOAM case for `spec` into `case_dir`. Returns derived state.
+
+    With force_mesh=False an existing mesh is reused when its signature matches
+    (so Run doesn't redo a 50 s Gmsh job the Mesh tab just did).
+    """
     params = AirfoilParams.from_spec(spec)
     st = derive(params)
 
     for sub in ("system", "constant/triSurface", "0"):
         (case_dir / sub).mkdir(parents=True, exist_ok=True)
 
-    # --- geometry + clean 2D Gmsh mesh ---
+    # --- geometry + clean 2D Gmsh mesh (reused when unchanged) ---
     airfoil = naca.generate(params.designation, params.chord, n=200)
     naca.export_stl(airfoil, case_dir / "constant/triSurface/airfoil.stl", span=params.span)
-    _write_mesh(case_dir, params, st, airfoil)
+    sig = _mesh_signature(params, st)
+    sig_file = case_dir / "airfoil.sig"
+    reuse = (
+        not force_mesh
+        and (case_dir / "airfoil.msh").exists()
+        and sig_file.exists()
+        and sig_file.read_text().strip() == sig
+    )
+    if not reuse:
+        _write_mesh(case_dir, params, st, airfoil)
+        sig_file.write_text(sig)
+    st.mesh_reused = reuse
     if params.boundary_layers:
         _write_snappy_layers(case_dir, params, st)
 

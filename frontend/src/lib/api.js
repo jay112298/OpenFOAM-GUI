@@ -37,6 +37,7 @@ export const api = {
   createCase: (name, template = "airfoil") => post("/cases/", { name, template }),
   updateSpec: (id, spec) => put(`/cases/${id}/spec`, { spec }),
   generate: (id) => post(`/cases/${id}/generate`),
+  meshLog: (id) => request(`/cases/${id}/mesh-log`),
   validate: (id) => request(`/cases/${id}/validate`),
   deleteCase: (id) => del(`/cases/${id}`),
 

@@ -39,11 +39,14 @@ def create_case(session: Session, name: str, template_id: str = "airfoil") -> Ca
     return case
 
 
-def generate(session: Session, case: Case) -> dict:
-    """Write the OpenFOAM case directory from the spec. Returns derived state."""
+def generate(session: Session, case: Case, force_mesh: bool = True) -> dict:
+    """Write the OpenFOAM case directory from the spec. Returns derived state.
+
+    force_mesh=False reuses an existing mesh whose signature still matches.
+    """
     d = case_dir(case.id)
     d.mkdir(parents=True, exist_ok=True)
-    st = build_case(case.spec, d)
+    st = build_case(case.spec, d, force_mesh=force_mesh)
     ncells_file = d / "airfoil.ncells"
     n_cells = int(ncells_file.read_text()) if ncells_file.exists() else None
     return {
@@ -54,7 +57,18 @@ def generate(session: Session, case: Case) -> dict:
         "first_cell_height": st.first_cell_height,
         "velocity_vector": list(st.velocity_vector),
         "n_cells": n_cells,
+        "mesh_reused": st.mesh_reused,
     }
+
+
+def mesh_log(case_id: str, tail: int = 120) -> dict:
+    """Tail of the Gmsh log written while the mesh generates (for live progress)."""
+    p = case_dir(case_id) / "log.gmsh"
+    if not p.exists():
+        return {"lines": [], "done": False}
+    lines = p.read_text(errors="replace").splitlines()
+    done = any(line.startswith("[gmsh] done") or line.startswith("[gmsh] ERROR") for line in lines)
+    return {"lines": lines[-tail:], "done": done}
 
 
 def validate(case: Case, mesh_metrics: dict | None = None) -> dict:

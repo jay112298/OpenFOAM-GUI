@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -55,6 +55,8 @@ export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
   const [yp, setYp] = useState(null);
   const [derived, setDerived] = useState(null);
   const [elapsed, setElapsed] = useState(0);
+  const [meshLog, setMeshLog] = useState([]);
+  const meshLogEnd = useRef(null);
 
   const calc = useMutation({
     mutationFn: () => api.yplus(field("physics.reference.velocity"), field("geometry.parameters.chord"),
@@ -63,16 +65,21 @@ export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
   });
   const gen = useMutation({
     mutationFn: async () => { await persist(); return api.generate(caseId); },
-    onMutate: () => setElapsed(0),
+    onMutate: () => { setElapsed(0); setMeshLog([]); },
     onSuccess: (d) => { setDerived(d); markDone("mesh"); },
+    onSettled: () => { api.meshLog(caseId).then((d) => setMeshLog(d.lines)).catch(() => {}); },
   });
 
-  // elapsed-time ticker while the mesh generates (gmsh has no progress stream)
+  // while the mesh generates: elapsed ticker + live tail of the Gmsh log
   useEffect(() => {
     if (!gen.isPending) return;
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => clearInterval(t);
-  }, [gen.isPending]);
+    const p = setInterval(() => {
+      api.meshLog(caseId).then((d) => setMeshLog(d.lines)).catch(() => {});
+    }, 1000);
+    return () => { clearInterval(t); clearInterval(p); };
+  }, [gen.isPending, caseId]);
+  useEffect(() => { meshLogEnd.current?.scrollIntoView({ block: "nearest" }); }, [meshLog]);
 
   const num = (path, label, unit, help) => (
     <Field label={label} unit={unit} help={help}>
@@ -102,7 +109,7 @@ export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
           </Field>
         </Card>
         <div>
-          <Card className="mb-4">
+          <Card className="mb-4 min-h-[190px]">
             <div className="text-sm font-semibold mb-1">1. y+ calculator</div>
             <p className="text-xs text-[var(--muted-foreground)] mb-3">Required before meshing — sizes the near-wall cell.</p>
             <Button variant="ghost" onClick={() => calc.mutate()} disabled={calc.isPending}>
@@ -126,10 +133,19 @@ export function Mesh({ caseId, field, setField, persist, markDone, goNext }) {
             </Button>
             {gen.isPending && (
               <p className="text-xs text-[var(--muted-foreground)] mt-2">
-                Meshing in Gmsh (typically 5–15s)…
+                Meshing in Gmsh — a {field("mesh.parameters.farfield_radius") ?? 50}c far-field typically takes{" "}
+                {(field("mesh.parameters.farfield_radius") ?? 50) >= 40 ? "30–60 s" : "10–30 s"}. Live log below.
               </p>
             )}
             {gen.isError && <p className="text-sm text-[var(--destructive)] mt-2">{gen.error.message}</p>}
+            {meshLog.length > 0 && (
+              <div className="bg-black/60 rounded-lg p-2 mt-3 h-44 overflow-auto font-mono text-[11px] text-green-400">
+                {meshLog.map((l, i) => (
+                  <div key={i} className={l.startsWith("[gmsh]") ? "text-[var(--foreground)] font-semibold" : ""}>{l}</div>
+                ))}
+                <div ref={meshLogEnd} />
+              </div>
+            )}
             {derived && (
               <div className="grid grid-cols-2 gap-2 mt-3">
                 <Stat label="Mesh cells" value={derived.n_cells?.toLocaleString() ?? "—"} />
@@ -238,7 +254,9 @@ export function Validate({ caseId, persist, markDone, goNext }) {
 
 /* ---------------- Run ---------------- */
 export function Run({ caseId, persist, markDone, goNext }) {
+  const qc = useQueryClient();
   const [logs, setLogs] = useState([]);
+  const [finalStatus, setFinalStatus] = useState(null);
   const [residuals, setResiduals] = useState([]);
   const [fields, setFields] = useState([]);
   const [stage, setStage] = useState(null);
@@ -267,7 +285,7 @@ export function Run({ caseId, persist, markDone, goNext }) {
     wsRef.current = ws;
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.log) setLogs((l) => [...l.slice(-500), m.log]);
+      if (m.log) setLogs((l) => [...l.slice(-500), { text: m.log, prep: !!m.prep }]);
       if (m.error) setError(m.error);
       if (m.stage) setStage(m.stage);
       if (m.time != null) setTime(m.time);
@@ -275,7 +293,14 @@ export function Run({ caseId, persist, markDone, goNext }) {
       if (m.courant) setCourant(m.courant);
       if (m.forces) setForces(m.forces);
       if (m.layers) setLayers(m.layers);
-      if (m.done) { setFinished(true); markDone("run"); }
+      if (m.done) {
+        setFinished(true);
+        setFinalStatus(m.status || "completed");
+        if (m.status !== "failed") markDone("run");
+        // case status changed server-side (completed/failed) -> refresh header + lists
+        qc.invalidateQueries({ queryKey: ["case", caseId] });
+        qc.invalidateQueries({ queryKey: ["cases"] });
+      }
       if (m.residual) {
         const { field: fld, initial } = m.residual;
         setFields((f) => (f.includes(fld) ? f : [...f, fld]));
@@ -306,9 +331,26 @@ export function Run({ caseId, persist, markDone, goNext }) {
             stage {stage.index}/{stage.total}: <span className="text-[var(--foreground)]">{stage.label}</span>
           </span>
         )}
-        {finished && <Badge severity="pass">finished</Badge>}
+        {finished && (
+          <Badge severity={finalStatus === "failed" ? "fail" : "pass"}>{finalStatus || "finished"}</Badge>
+        )}
       </div>
       {error && <p className="text-sm text-[var(--destructive)] mt-3">{error}</p>}
+
+      {/* stage progress: prep -> [1/N] ... [N/N] -> done */}
+      {started && (
+        <div className="mt-3">
+          <div className="h-1.5 w-full bg-[var(--muted)] rounded overflow-hidden">
+            <div
+              className="h-full bg-[var(--primary)] transition-all duration-500"
+              style={{ width: `${finished ? 100 : stage ? Math.round(((stage.index - 0.5) / stage.total) * 100) : 4}%` }}
+            />
+          </div>
+          <div className="text-[11px] text-[var(--muted-foreground)] mt-1">
+            {finished ? "run finished" : stage ? `${stage.index} of ${stage.total} stages` : "preparing case…"}
+          </div>
+        </div>
+      )}
 
       {/* live metrics — shown once started */}
       {started && (
@@ -347,7 +389,9 @@ export function Run({ caseId, persist, markDone, goNext }) {
             {logs.length === 0 && !error && (
               <div className="text-[var(--muted-foreground)]">Preparing case and starting container… waiting for output.</div>
             )}
-            {logs.map((l, i) => <div key={i} className="whitespace-pre-wrap">{l}</div>)}
+            {logs.map((l, i) => (
+              <div key={i} className={l.prep ? "text-[var(--warning)]" : "whitespace-pre-wrap"}>{l.text}</div>
+            ))}
             <div ref={logEnd} />
           </div>
         </Card>
