@@ -62,7 +62,7 @@ export function Dashboard() {
           </div>
         ) : (
           <div className="divide-y divide-[var(--border)]">
-            {cases.slice(0, 8).map((c: any) => (
+            {cases.slice(0, 8).map((c) => (
               <Link
                 key={c.id}
                 to={`/cases/${c.id}`}
@@ -83,15 +83,7 @@ export function Dashboard() {
   );
 }
 
-function StatusCard({
-  label,
-  value,
-  ok,
-}: {
-  label: string;
-  value: string;
-  ok: boolean;
-}) {
+function StatusCard({ label, value, ok }) {
   return (
     <div className="bg-[var(--card)] rounded-xl border border-[var(--border)] p-4">
       <p className="text-sm text-[var(--muted-foreground)] m-0 mb-1">{label}</p>

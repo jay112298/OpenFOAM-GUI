@@ -11,8 +11,9 @@ class Settings(BaseSettings):
     cases_dir: Path | None = None  # defaults to data_dir / "cases"
     db_path: Path | None = None  # defaults to data_dir / "ofgui.db"
 
-    # OpenFOAM Docker image (matches user's ~/CFD/openfoam-docker scheme)
-    openfoam_image: str = "opencfd/openfoam-run:2506"
+    # OpenFOAM Docker image. User's local image is tagged :latest (== v2506).
+    # Override via OFGUI_OPENFOAM_IMAGE if you pull a version-pinned tag.
+    openfoam_image: str = "opencfd/openfoam-run:latest"
 
     # Dev server
     cors_origins: list[str] = ["http://localhost:5173"]

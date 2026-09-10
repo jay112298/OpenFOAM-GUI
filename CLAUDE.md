@@ -11,9 +11,10 @@ cd backend && .venv/bin/uvicorn app.main:app --reload   # :8000
 cd backend && .venv/bin/pytest                          # tests
 cd backend && .venv/bin/ruff check app                  # lint
 
-# Frontend
+# Frontend (plain JS + JSX, no TypeScript)
 cd frontend && npm run dev      # :5173, proxies /api -> :8000
-cd frontend && npm run build    # tsc + vite build (must pass before merge)
+cd frontend && npm run build    # vite build (must pass before merge)
+cd frontend && npm run lint     # eslint
 ```
 
 ## Architecture (the short version)
@@ -42,5 +43,6 @@ Pipeline pattern, identical for every domain (aero/turbo/engine):
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:` ...).
 - Before merge to develop: frontend `npm run build` passes, backend
   `python -c "from app.main import app"` passes.
+- Frontend is plain JavaScript (`.jsx`/`.js`), no TypeScript. `@/` aliases `src/`.
 - OpenFOAM dicts: generate through foamlib/generators, never string-template
   in route handlers.

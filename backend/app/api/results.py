@@ -1,17 +1,49 @@
-"""Post-processing: forces, Cp, field extracts (slices) for VTK.js, ParaView export."""
+"""Post-processing: force coefficient history; open results in ParaView."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+
+from app.parsers import forces
+from app.services import case_service
+from app.services.post import fields, paraview
 
 router = APIRouter()
 
 
+@router.get("/{case_id}/fields")
+def list_fields(case_id: str):
+    """Which solution fields are available to plot, and at which times."""
+    return fields.available(case_service.case_dir(case_id))
+
+
+# sync def -> threadpool: reading + slicing the case is CPU work
+@router.get("/{case_id}/field")
+def field_slice(case_id: str, name: str, time: float | None = None):
+    """Mid-span slice of one field as a triangle soup for the browser canvas."""
+    try:
+        return fields.slice_field(case_service.case_dir(case_id), name, time)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not read field: {exc}")
+
+
 @router.get("/{case_id}/forces")
-async def forces(case_id: str):
-    # TODO(phase-1): parse force coefficient function-object output
-    return {"todo": "phase-1"}
+async def force_history(case_id: str):
+    cdir = case_service.case_dir(case_id)
+    h = forces.history(cdir)
+    last = h[-1] if h else None
+    return {
+        "history": [{"time": f.time, "cl": f.cl, "cd": f.cd, "cm": f.cm} for f in h],
+        "latest": {"cl": last.cl, "cd": last.cd, "cm": last.cm} if last else None,
+    }
 
 
-@router.get("/{case_id}/slice")
-async def field_slice(case_id: str):
-    # TODO(phase-1): PyVista slice -> decimated VTP for browser
-    return {"todo": "phase-1"}
+@router.post("/{case_id}/paraview")
+def open_paraview(case_id: str):
+    """Launch the user's local ParaView on this case."""
+    try:
+        return paraview.open_in_paraview(case_service.case_dir(case_id))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not launch ParaView: {exc}")
