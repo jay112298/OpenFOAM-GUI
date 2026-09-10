@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -253,10 +253,12 @@ export function Validate({ caseId, persist, markDone, goNext }) {
 }
 
 /* ---------------- Run ---------------- */
-export function Run({ caseId, persist, markDone, goNext }) {
+export function Run({ caseId, pipe, persist, markDone, goNext }) {
   const qc = useQueryClient();
   const [logs, setLogs] = useState([]);
   const [finalStatus, setFinalStatus] = useState(null);
+  const [runId, setRunId] = useState(null);
+  const [autoScroll, setAutoScroll] = useState(true);
   const [residuals, setResiduals] = useState([]);
   const [fields, setFields] = useState([]);
   const [stage, setStage] = useState(null);
@@ -266,7 +268,9 @@ export function Run({ caseId, persist, markDone, goNext }) {
   const [forces, setForces] = useState(null);
   const [layers, setLayers] = useState(null);
   const [finished, setFinished] = useState(false);
-  const [started, setStarted] = useState(false);
+  // a previous run exists for this case -> we reattach to it below, so the
+  // console/metrics should be visible from first paint
+  const [started, setStarted] = useState(() => !!pipe?.latest_run?.container_id);
   const [error, setError] = useState(null);
   const wsRef = useRef(null);
   const logEnd = useRef(null);
@@ -278,10 +282,26 @@ export function Run({ caseId, persist, markDone, goNext }) {
     onError: (e) => setError(e.message),
   });
 
-  function openSocket(runId) {
+  const stop = useMutation({
+    mutationFn: () => api.stopRun(runId),
+    onSuccess: () => { setFinished(true); setFinalStatus("cancelled"); },
+    onError: (e) => setError(e.message),
+  });
+
+  function openSocket(id) {
+    // drop any previous stream first, otherwise an earlier run's replay keeps
+    // writing into this run's console/chart
+    if (wsRef.current) {
+      wsRef.current.onmessage = null;
+      wsRef.current.onerror = null;
+      wsRef.current.close();
+    }
     setLogs([]); setResiduals([]); setFields([]); setError(null);
-    setFinished(false); iter.current = 0;
-    const ws = api.runSocket(runId);
+    setFinished(false); setFinalStatus(null); setStage(null);
+    setForces(null); setCont(null); setCourant(null); setTime(null);
+    iter.current = 0;
+    setRunId(id);
+    const ws = api.runSocket(id);
     wsRef.current = ws;
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
@@ -315,24 +335,42 @@ export function Run({ caseId, persist, markDone, goNext }) {
     ws.onerror = () => setError("WebSocket error — is Docker running?");
   }
 
+  // Reattach to the case's most recent run on mount: Docker replays the whole
+  // container log, so the console, chart and metrics rebuild after a tab
+  // switch or a page reload instead of showing an empty panel.
+  useEffect(() => {
+    const last = pipe?.latest_run;
+    if (!last || !last.container_id) return;
+    openSocket(last.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caseId]);
+
   useEffect(() => () => wsRef.current?.close(), []);
-  useEffect(() => { logEnd.current?.scrollIntoView(); }, [logs]);
+  useEffect(() => { if (autoScroll) logEnd.current?.scrollIntoView({ block: "nearest" }); }, [logs, autoScroll]);
 
   const colors = ["#3b82f6", "#22c55e", "#eab308", "#ef4444", "#a855f7", "#06b6d4"];
 
   return (
     <div className="max-w-4xl">
       <div className="flex items-center gap-3">
-        <Button variant="success" onClick={() => start.mutate()} disabled={start.isPending}>
-          {start.isPending ? "Starting…" : "Start solver"}
+        <Button variant="success" onClick={() => start.mutate()}
+          disabled={start.isPending || (started && !finished)}>
+          {start.isPending ? "Starting…" : started && !finished ? "Running…" : "Start solver"}
         </Button>
+        {started && !finished && (
+          <Button variant="danger" onClick={() => stop.mutate()} disabled={stop.isPending || !runId}>
+            {stop.isPending ? "Stopping…" : "Stop"}
+          </Button>
+        )}
         {stage && (
           <span className="text-sm text-[var(--muted-foreground)]">
             stage {stage.index}/{stage.total}: <span className="text-[var(--foreground)]">{stage.label}</span>
           </span>
         )}
         {finished && (
-          <Badge severity={finalStatus === "failed" ? "fail" : "pass"}>{finalStatus || "finished"}</Badge>
+          <Badge severity={finalStatus === "completed" ? "pass" : finalStatus ? "fail" : "pass"}>
+            {finalStatus || "finished"}
+          </Badge>
         )}
       </div>
       {error && <p className="text-sm text-[var(--destructive)] mt-3">{error}</p>}
@@ -352,9 +390,9 @@ export function Run({ caseId, persist, markDone, goNext }) {
         </div>
       )}
 
-      {/* live metrics — shown once started */}
+      {/* live metrics — sticky so they stay visible while the console streams */}
       {started && (
-        <div className="grid grid-cols-4 gap-3 mt-5">
+        <div className="grid grid-cols-4 gap-3 mt-5 sticky top-0 z-10 bg-[var(--background)] py-2">
           <Stat label="Iteration" value={time ?? "—"} />
           <Stat label="Cl" value={forces ? forces.cl.toFixed(4) : "—"} />
           <Stat label="Cd" value={forces ? forces.cd.toFixed(5) : "—"} />
@@ -384,7 +422,13 @@ export function Run({ caseId, persist, markDone, goNext }) {
 
       {started && (
         <Card className="mt-4">
-          <div className="text-sm font-semibold mb-2">Solver / mesh console</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-semibold">Solver / mesh console</div>
+            <label className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] cursor-pointer">
+              <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
+              auto-scroll
+            </label>
+          </div>
           <div className="bg-black/60 rounded-lg p-3 h-72 overflow-auto font-mono text-xs text-green-400">
             {logs.length === 0 && !error && (
               <div className="text-[var(--muted-foreground)]">Preparing case and starting container… waiting for output.</div>
@@ -404,14 +448,19 @@ export function Run({ caseId, persist, markDone, goNext }) {
 
 /* ---------------- Results ---------------- */
 export function Results({ caseId }) {
-  const load = useMutation({ mutationFn: () => api.forces(caseId) });
+  // auto-load on open; the button becomes a refresh
+  const load = useQuery({
+    queryKey: ["forces", caseId],
+    queryFn: () => api.forces(caseId),
+    retry: false,
+  });
   const paraview = useMutation({ mutationFn: () => api.openParaview(caseId) });
   const data = load.data;
   return (
     <div className="max-w-4xl">
       <div className="flex items-center gap-3">
-        <Button onClick={() => load.mutate()} disabled={load.isPending}>
-          {load.isPending ? "Loading…" : "Load force coefficients"}
+        <Button onClick={() => load.refetch()} disabled={load.isFetching}>
+          {load.isFetching ? "Loading…" : "Refresh results"}
         </Button>
         <Button variant="ghost" onClick={() => paraview.mutate()} disabled={paraview.isPending}>
           {paraview.isPending ? "Opening…" : "Open in ParaView"}

@@ -55,7 +55,15 @@ export function Cases() {
                 <div className="flex items-center gap-4">
                   <Badge severity={statusSeverity[c.status] || "warn"}>{c.status}</Badge>
                   <button
-                    onClick={() => del.mutate(c.id)}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Delete "${c.name}"?\n\nThis removes the case and its OpenFOAM directory (mesh, logs, results) from disk. This cannot be undone.`
+                        )
+                      ) {
+                        del.mutate(c.id);
+                      }
+                    }}
                     className="text-[var(--muted-foreground)] hover:text-[var(--destructive)] cursor-pointer"
                     title="Delete case"
                   >

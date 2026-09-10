@@ -38,6 +38,7 @@ export const api = {
   updateSpec: (id, spec) => put(`/cases/${id}/spec`, { spec }),
   generate: (id) => post(`/cases/${id}/generate`),
   meshLog: (id) => request(`/cases/${id}/mesh-log`),
+  pipelineStatus: (id) => request(`/cases/${id}/pipeline-status`),
   validate: (id) => request(`/cases/${id}/validate`),
   deleteCase: (id) => del(`/cases/${id}`),
 
@@ -53,7 +54,9 @@ export const api = {
   // runs
   startRun: (caseId) => post(`/runs/${caseId}/start`),
   listRuns: (caseId) => request(`/runs/?case_id=${caseId}`),
+  latestRun: (caseId) => request(`/runs/latest?case_id=${caseId}`),
   runStatus: (runId) => request(`/runs/${runId}/status`),
+  stopRun: (runId) => post(`/runs/${runId}/stop`),
   runSocket: (runId) => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     return new WebSocket(`${proto}://${location.host}/api/runs/ws/${runId}`);
@@ -72,6 +75,9 @@ export const api = {
   createSweep: (base_case_id, values, parameter, name) =>
     post("/sweeps/", { base_case_id, values, parameter, name }),
   polar: (sweepId) => request(`/sweeps/${sweepId}/polar`),
+  sweepStatus: (sweepId) => request(`/sweeps/${sweepId}/status`),
+  runSweep: (sweepId) => post(`/sweeps/${sweepId}/run`),
+  stopSweep: (sweepId) => post(`/sweeps/${sweepId}/stop`),
 };
 
 // get/set a dotted path inside a spec object (immutably)

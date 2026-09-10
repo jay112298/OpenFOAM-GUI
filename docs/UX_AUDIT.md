@@ -15,20 +15,30 @@ for upcoming development.
 | 3 | **Case/run status never updates.** Every case shows `running` forever on Dashboard/Cases; case header stays `draft` after a completed solve. | Dashboard listed 3 cases all "running"; header `status: draft` post-run | [fixed] status set to completed/failed when the stream ends; header refetches |
 | 4 | **Misleading timing hint.** "Meshing typically 5–15s" — a 50c far-field mesh takes ~50s. | measured 50s | [fixed] hint scales with far-field |
 
-## P1 — real friction, fix next
+## P1 — real friction
 
-| # | Finding | Suggested fix |
-|---|---------|---------------|
-| 5 | **Layout shift on Mesh tab.** y+ results expand their card and push the Generate button down ~40px; a click aimed at it can miss (I did). | Reserve space for y+ results (min-height) or place results inline. [fixed] min-height |
-| 6 | **No stage progress bar on Run.** Stages arrive as text only; no sense of 3/6 → 6/6 progress. | Progress bar driven by `[n/N]` stage events. [fixed] |
-| 7 | **Metric tiles scroll out of view** during a long solve; you lose Cl/Cd/iteration while watching the log. | Sticky metrics row above the console. |
-| 8 | **No way to stop a run.** Divergence or a wrong setting means waiting for the container to finish. | "Stop" button → `runner.cancel(handle)`; mark run cancelled. |
-| 9 | **Delete is instant** on Cases (trash icon) — no confirmation, and it removes the on-disk case dir. | Confirm dialog; or soft-delete with undo. |
-| 10 | **Sweeps are manual.** Creating a sweep makes N child cases you must open and run one by one. | "Run all" on the sweep with a queue; polar fills as children finish. |
-| 11 | **Settings page is a placeholder.** Image tag, data dir, default cores are all hard-coded / env-only. | Real settings form (image, cases dir, default cores, units). |
-| 12 | **Solver log auto-scroll can't be paused**; reading earlier output while it streams is impossible. | "Pause scroll" toggle; detach when user scrolls up. |
-| 13 | **Run tab state is lost on tab switch** — leaving Run unmounts the WebSocket; coming back shows an empty console even though the solve continues. | Lift run state to the Pipeline/store; reconnect and replay from the log file. |
-| 13b | **Stage completion is lost on page reload.** Refreshing a case re-locks every tab; you must re-preview and re-generate (the mesh is on disk and reused, but the UI doesn't know). | Derive completion from server state (mesh file + signature present, last run status) instead of client-only flags. |
+| # | Finding | Fix | Status |
+|---|---------|-----|--------|
+| 5 | **Layout shift on Mesh tab.** y+ results expand their card and push the Generate button down ~40px; a click aimed at it can miss (I did). | min-height on the y+ card | [fixed] |
+| 6 | **No stage progress bar on Run.** Stages arrive as text only; no sense of 3/6 → 6/6 progress. | Progress bar driven by `[n/N]` stage events | [fixed] |
+| 7 | **Metric tiles scroll out of view** during a long solve; you lose Cl/Cd/iteration while watching the log. | Sticky metrics row above the console | [fixed] |
+| 8 | **No way to stop a run.** Divergence or a wrong setting means waiting for the container to finish. | Stop button → `POST /runs/{id}/stop` → container killed, run `cancelled` | [fixed] |
+| 9 | **Delete is instant** on Cases (trash icon) — no confirmation, and it removes the on-disk case dir. | Confirm dialog naming what is deleted | [fixed] |
+| 10 | **Sweeps are manual.** Creating a sweep makes N child cases you must open and run one by one. | "Run all" queue (sequential), live per-case status + progress, polar fills in | [fixed] |
+| 11 | **Settings page is a placeholder.** Image tag, data dir, default cores are all hard-coded / env-only. | Real settings form (image, cases dir, default cores, units) | open |
+| 12 | **Solver log auto-scroll can't be paused**; reading earlier output while it streams is impossible. | auto-scroll toggle on the console | [fixed] |
+| 13 | **Run tab state is lost on tab switch / reload** — the console comes back empty even though the solve continues. | Reattach to the case's latest run on mount; Docker replays the full log so console, chart and metrics rebuild | [fixed] |
+| 13b | **Stage completion is lost on page reload.** Refreshing a case re-locks every tab. | `GET /cases/{id}/pipeline-status` (mesh on disk, preflight, last run) seeds the gating | [fixed] |
+
+### Bugs found while implementing the above
+
+| Finding | Status |
+|---------|--------|
+| A run finished with no WebSocket attached (browser closed mid-solve) stayed `running` forever, and stopping it then wrongly marked a *completed* run `cancelled`. | [fixed] `reconcile()` syncs stored status with the container before any status read or stop |
+| Starting a new run did not close the previous WebSocket, so an earlier run's replay kept writing into the new run's console and chart. | [fixed] previous socket closed + state reset on open |
+| `create_case` stored the shared module-level template dict, so any in-place spec edit would corrupt the template for every later case. | [fixed] deep copy on create |
+| WebSocket teardown raised `Cannot call "send" once a close message has been sent` whenever a client navigated away mid-stream. | [fixed] guarded sends/close |
+| Sweep queue progress did not update while the browser tab was unfocused (TanStack pauses polling in background). | [fixed] `refetchIntervalInBackground` |
 
 ## P2 — polish
 
