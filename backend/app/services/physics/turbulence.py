@@ -27,6 +27,25 @@ class TurbulenceInlet:
     length_scale: float
 
 
+TRANSITION_MODELS = {"kOmegaSSTLM"}
+
+
+def re_theta_t(intensity: float) -> float:
+    """Inlet transition momentum-thickness Reynolds number (Langtry–Menter).
+
+    Empirical correlation used to set the ReThetat inlet for kOmegaSSTLM,
+    with Tu in percent:
+        Tu <= 1.3 :  1173.51 - 589.428*Tu + 0.2196/Tu^2
+        Tu >  1.3 :  331.50*(Tu - 0.5658)^-0.671
+    The low-Tu branch blows up as Tu -> 0, so Tu is clamped to 0.027%
+    (the usual practical floor).
+    """
+    tu = max(intensity * 100.0, 0.027)
+    if tu <= 1.3:
+        return 1173.51 - 589.428 * tu + 0.2196 / tu**2
+    return 331.50 * (tu - 0.5658) ** -0.671
+
+
 def turbulence_inlet(velocity: float, intensity: float, length_scale: float) -> TurbulenceInlet:
     """Compute inlet k, omega, epsilon.
 

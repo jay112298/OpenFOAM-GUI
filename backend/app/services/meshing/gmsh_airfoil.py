@@ -21,15 +21,18 @@ from pathlib import Path
 def build_mesh(
     coords: list[list[float]],
     chord: float,
-    first_layer: float,
-    n_layers: int = 20,
-    expansion: float = 1.2,
+    wall_cell: float,
     farfield_radius: float = 15.0,
     span: float = 0.05,
     n_far: float = 4.0,
     out_path: Path | None = None,
 ) -> Path:
     """Generate the airfoil mesh in a spawned subprocess.
+
+    `wall_cell` is the target cell size at the airfoil surface. The caller sets
+    it: for a wall-function mesh it's the y+ first-cell height, and when snappy
+    prism layers are added afterwards it is sized from the layer-stack
+    thickness so snappy has a cell's worth of room to insert them into.
 
     Gmsh installs signal handlers that only work on the interpreter's main
     thread; FastAPI/uvicorn run request handlers in a worker thread, so we run
@@ -39,21 +42,26 @@ def build_mesh(
     ctx = mp.get_context("spawn")
     proc = ctx.Process(
         target=_run_gmsh,
-        args=(coords, chord, first_layer, n_layers, expansion, farfield_radius, span, n_far, str(out_path)),
+        args=(coords, chord, wall_cell, farfield_radius, span, n_far, str(out_path)),
     )
     proc.start()
     proc.join()
     if proc.exitcode != 0 or not out_path.exists():
-        raise RuntimeError(f"Gmsh meshing failed (exit {proc.exitcode})")
+        # surface why: the worker's own output is in log.gmsh next to the mesh
+        log = out_path.parent / "log.gmsh"
+        detail = ""
+        if log.exists():
+            tail = [ln for ln in log.read_text(errors="replace").splitlines() if ln.strip()][-4:]
+            if tail:
+                detail = " — " + " | ".join(tail)
+        raise RuntimeError(f"Gmsh meshing failed (exit {proc.exitcode}){detail}")
     return out_path
 
 
 def _run_gmsh(
     coords: list[list[float]],
     chord: float,
-    first_layer: float,
-    n_layers: int,
-    expansion: float,
+    wall_cell: float,
     farfield_radius: float,
     span: float,
     n_far: float,
@@ -80,7 +88,10 @@ def _run_gmsh(
 
     R = farfield_radius * chord
     cx = 0.25 * chord  # far-field centred at quarter chord
-    mark(f"building geometry: far-field {farfield_radius:g}c, span {span:g} m")
+    mark(
+        f"building geometry: far-field {farfield_radius:g}c, span {span:g} m, "
+        f"wall cell {wall_cell:.3g} m"
+    )
 
     # de-duplicate consecutive points and drop a closing duplicate
     pts = []
@@ -118,7 +129,7 @@ def _run_gmsh(
         f_dist = field.add("Distance")
         field.setNumbers(f_dist, "CurvesList", [spline])
         field.setNumber(f_dist, "Sampling", 400)
-        lc_wall = max(first_layer, chord / 800.0)  # don't go absurdly fine
+        lc_wall = max(wall_cell, chord / 2000.0)  # floor: don't go absurdly fine
         lc_far = n_far * chord
         f_thr = field.add("Threshold")
         field.setNumber(f_thr, "InField", f_dist)

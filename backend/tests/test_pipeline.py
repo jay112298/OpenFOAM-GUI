@@ -63,6 +63,67 @@ def test_validation_blocks_transonic_incompressible():
     assert any(f["rule_id"] == "mach-regime" and f["severity"] == "fail" for f in report["findings"])
 
 
+def test_re_theta_t_correlation():
+    from app.services.physics.turbulence import re_theta_t
+
+    # Langtry-Menter: low-Tu branch is much larger than the high-Tu branch
+    assert re_theta_t(0.01) > re_theta_t(0.05)
+    assert abs(re_theta_t(0.01) - (1173.51 - 589.428 * 1.0 + 0.2196 / 1.0**2)) < 1e-6
+    # clamped near zero instead of exploding
+    assert re_theta_t(0.0) < 1e5
+
+
+def test_transition_model_writes_extra_fields(tmp_path):
+    """kOmegaSSTLM needs gammaInt + ReThetat; kOmegaSST must not get them."""
+    spec = {
+        "geometry": {"parameters": {"designation": "0012", "chord": 1.0}},
+        "physics": {"fluid": {"name": "air"}, "turbulence_model": "kOmegaSSTLM",
+                    "reference": {"velocity": 30, "angle_of_attack": 0, "turbulence_intensity": 0.01}},
+        "mesh": {"parameters": {"farfield_radius": 12, "boundary_layers": True, "target_yplus": 1.0}},
+        "numerics": {"solver": "simpleFoam"},
+    }
+    build_case(spec, tmp_path)
+    assert (tmp_path / "0/gammaInt").exists()
+    assert (tmp_path / "0/ReThetat").exists()
+    assert "gammaInt" in (tmp_path / "system/fvSchemes").read_text()
+
+    plain = tmp_path / "plain"
+    spec["physics"]["turbulence_model"] = "kOmegaSST"
+    build_case(spec, plain)
+    assert not (plain / "0/gammaInt").exists()
+
+
+def test_layer_count_is_fitted_to_the_wall_cell():
+    """Stack must fit inside one surface cell, else snappy adds ~0 layers."""
+    from app.services.generators.airfoil_case import (
+        fitted_n_layers,
+        layer_stack_thickness,
+        wall_cell_size,
+    )
+
+    p = AirfoilParams(boundary_layers=True, n_layers=40, target_yplus=1.0)
+    st = derive(p)
+    n = fitted_n_layers(p, st)
+    assert 1 <= n < 40
+    fitted = AirfoilParams(boundary_layers=True, n_layers=n, layer_expansion=p.layer_expansion)
+    assert layer_stack_thickness(fitted, st.first_cell_height) <= 0.8 * wall_cell_size(p, st)
+
+
+def test_transition_model_warns_without_resolved_wall():
+    spec = {
+        "geometry": {"parameters": {"designation": "0012", "chord": 1.0}},
+        "physics": {"fluid": {"name": "air"}, "turbulence_model": "kOmegaSSTLM",
+                    "reference": {"velocity": 30, "angle_of_attack": 0, "turbulence_intensity": 0.01}},
+        "mesh": {"parameters": {"boundary_layers": False, "target_yplus": 30}},
+        "numerics": {"solver": "simpleFoam"},
+    }
+    report = preflight_report(spec)
+    warn = [f for f in report["findings"] if f["rule_id"] == "transition-model-mesh"]
+    assert warn and warn[0]["severity"] == "warn"
+    # still runnable — it's a quality warning, not a blocker
+    assert report["can_run"] is True
+
+
 def test_validation_passes_good_case():
     spec = {
         "geometry": {"parameters": {"designation": "0012", "chord": 1.0}},

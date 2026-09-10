@@ -26,7 +26,7 @@ from foamlib import FoamFieldFile, FoamFile
 from app.services.geometry import naca
 from app.services.meshing.yplus import first_cell_height
 from app.services.physics.fluids import get_fluid
-from app.services.physics.turbulence import turbulence_inlet
+from app.services.physics.turbulence import TRANSITION_MODELS, re_theta_t, turbulence_inlet
 
 # foamlib warns when it normalizes scheme strings to tokens / on-off to bool;
 # the written OpenFOAM output is correct, so silence the noise.
@@ -136,7 +136,9 @@ def _mesh_signature(p: AirfoilParams, st: DerivedState) -> str:
         "chord": p.chord,
         "farfield_radius": p.farfield_radius,
         "span": p.span,
-        "first_cell": float(f"{st.first_cell_height:.3g}"),
+        # surface cell size + fitted layer count define the mesh
+        "wall_cell": float(f"{wall_cell_size(p, st):.3g}"),
+        "n_layers": fitted_n_layers(p, st),
     }
     return hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()
 
@@ -183,6 +185,49 @@ def build_case(spec: dict, case_dir: Path, force_mesh: bool = True) -> DerivedSt
     return st
 
 
+def layer_stack_thickness(p: AirfoilParams, first_layer: float) -> float:
+    """Total thickness of the prism stack: first * (r^n - 1) / (r - 1)."""
+    r = p.layer_expansion
+    if abs(r - 1.0) < 1e-9:
+        return first_layer * p.n_layers
+    return first_layer * (r**p.n_layers - 1) / (r - 1)
+
+
+def wall_cell_size(p: AirfoilParams, st: DerivedState) -> float:
+    """Target Gmsh cell size at the airfoil surface.
+
+    Kept at a resolution-driven size in both cases. Cells here are isotropic, so
+    this also sets the *streamwise* surface resolution — coarsening it to make
+    room for prism layers costs more accuracy (pressure distribution) than the
+    layers win back. With layers we instead cap their count to fit (see
+    `fitted_n_layers`).
+    """
+    if p.boundary_layers:
+        return p.chord / 800.0
+    return max(st.first_cell_height, p.chord / 800.0)
+
+
+def fitted_n_layers(p: AirfoilParams, st: DerivedState) -> int:
+    """Largest layer count whose stack still fits inside one surface cell.
+
+    snappy carves the prism stack out of the existing wall cell; if the stack is
+    thicker than that cell it silently adds ~0 layers (seen as 0% coverage).
+    Capping the count keeps a fine surface mesh *and* a resolved wall.
+    """
+    if not p.boundary_layers:
+        return p.n_layers
+    budget = 0.8 * wall_cell_size(p, st)
+    first, r = st.first_cell_height, p.layer_expansion
+    n = 0
+    while n < p.n_layers:
+        nxt = n + 1
+        stack = first * nxt if abs(r - 1) < 1e-9 else first * (r**nxt - 1) / (r - 1)
+        if stack > budget:
+            break
+        n = nxt
+    return max(n, 1)
+
+
 def _write_mesh(case_dir: Path, p: AirfoilParams, st: DerivedState, airfoil: naca.Airfoil) -> None:
     """Generate a clean 2D Gmsh C-mesh (.msh) -> converted by gmshToFoam in Allrun."""
     from app.services.meshing.gmsh_airfoil import build_mesh
@@ -190,9 +235,7 @@ def _write_mesh(case_dir: Path, p: AirfoilParams, st: DerivedState, airfoil: nac
     build_mesh(
         airfoil.coordinates,
         chord=p.chord,
-        first_layer=st.first_cell_height,
-        n_layers=p.n_layers,
-        expansion=p.layer_expansion,
+        wall_cell=wall_cell_size(p, st),
         farfield_radius=p.farfield_radius,
         span=p.span,
         out_path=case_dir / "airfoil.msh",
@@ -219,7 +262,7 @@ def _write_snappy_layers(case_dir: Path, p: AirfoilParams, st: DerivedState) -> 
     f["snapControls"] = {"nSmoothPatch": 3, "tolerance": 2.0, "nSolveIter": 30, "nRelaxIter": 5}
     f["addLayersControls"] = {
         "relativeSizes": False,
-        "layers": {"airfoil": {"nSurfaceLayers": p.n_layers}},
+        "layers": {"airfoil": {"nSurfaceLayers": fitted_n_layers(p, st)}},
         "expansionRatio": p.layer_expansion,
         "firstLayerThickness": st.first_cell_height,
         "minThickness": st.first_cell_height * 0.1,
@@ -293,6 +336,9 @@ def _write_fv_schemes(case_dir: Path) -> None:
         "div(phi,k)": "bounded Gauss upwind",
         "div(phi,omega)": "bounded Gauss upwind",
         "div(phi,epsilon)": "bounded Gauss upwind",
+        # transition model (kOmegaSSTLM) transport equations
+        "div(phi,gammaInt)": "bounded Gauss upwind",
+        "div(phi,ReThetat)": "bounded Gauss upwind",
         "div((nuEff*dev2(T(grad(U)))))": "Gauss linear",
     }
     f["laplacianSchemes"] = {"default": "Gauss linear corrected"}
@@ -305,7 +351,7 @@ def _write_fv_solution(case_dir: Path) -> None:
     f = FoamFile(case_dir / "system/fvSolution")
     f["solvers"] = {
         "p": {"solver": "GAMG", "tolerance": 1e-6, "relTol": 0.1, "smoother": "GaussSeidel"},
-        '"(U|k|omega|epsilon)"': {
+        '"(U|k|omega|epsilon|gammaInt|ReThetat)"': {
             "solver": "smoothSolver", "smoother": "symGaussSeidel",
             "tolerance": 1e-6, "relTol": 0.1,
         },
@@ -317,7 +363,7 @@ def _write_fv_solution(case_dir: Path) -> None:
     }
     f["relaxationFactors"] = {
         "fields": {"p": 0.3},
-        "equations": {"U": 0.7, '"(k|omega|epsilon)"': 0.7},
+        "equations": {"U": 0.7, '"(k|omega|epsilon|gammaInt|ReThetat)"': 0.7},
     }
 
 
@@ -382,6 +428,28 @@ def _write_fields(case_dir: Path, p: AirfoilParams, st: DerivedState) -> None:
         "airfoil": {"type": "nutUSpaldingWallFunction", "value": 0.0},
         "frontAndBack": {"type": "empty"},
     }
+
+    # kOmegaSSTLM (Langtry-Menter) solves two extra transport equations.
+    if p.turbulence_model in TRANSITION_MODELS:
+        rtt = re_theta_t(p.turbulence_intensity)
+
+        fg = FoamFieldFile(case_dir / "0/gammaInt")
+        fg.dimensions = [0, 0, 0, 0, 0, 0, 0]
+        fg.internal_field = 1.0
+        fg.boundary_field = {
+            "farfield": {"type": "inletOutlet", "inletValue": 1.0, "value": 1.0},
+            "airfoil": {"type": "zeroGradient"},
+            "frontAndBack": {"type": "empty"},
+        }
+
+        fr = FoamFieldFile(case_dir / "0/ReThetat")
+        fr.dimensions = [0, 0, 0, 0, 0, 0, 0]
+        fr.internal_field = rtt
+        fr.boundary_field = {
+            "farfield": {"type": "inletOutlet", "inletValue": rtt, "value": rtt},
+            "airfoil": {"type": "zeroGradient"},
+            "frontAndBack": {"type": "empty"},
+        }
 
 
 def _write_allrun(case_dir: Path, p: AirfoilParams) -> None:
