@@ -4,9 +4,27 @@ from fastapi import APIRouter, HTTPException
 
 from app.parsers import forces
 from app.services import case_service
-from app.services.post import paraview
+from app.services.post import fields, paraview
 
 router = APIRouter()
+
+
+@router.get("/{case_id}/fields")
+def list_fields(case_id: str):
+    """Which solution fields are available to plot, and at which times."""
+    return fields.available(case_service.case_dir(case_id))
+
+
+# sync def -> threadpool: reading + slicing the case is CPU work
+@router.get("/{case_id}/field")
+def field_slice(case_id: str, name: str, time: float | None = None):
+    """Mid-span slice of one field as a triangle soup for the browser canvas."""
+    try:
+        return fields.slice_field(case_service.case_dir(case_id), name, time)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not read field: {exc}")
 
 
 @router.get("/{case_id}/forces")

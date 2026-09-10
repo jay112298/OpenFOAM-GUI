@@ -13,6 +13,7 @@ from sqlmodel import Session
 
 from app.config import settings
 from app.models.case import Case, CaseStatus
+from app.services import settings_service
 from app.services.generators.airfoil_case import build_case
 from app.services.validation.engine import preflight_report
 from app.templates.registry import get_template
@@ -26,14 +27,17 @@ def create_case(session: Session, name: str, template_id: str = "airfoil") -> Ca
     template = get_template(template_id)
     if template is None:
         raise ValueError(f"Unknown template: {template_id}")
+    # deep copy: the template dict is module-level shared state, and an in-place
+    # edit of a case spec would otherwise corrupt every later case
+    spec = copy.deepcopy(template["spec"])
+    spec.setdefault("numerics", {})["n_procs"] = settings_service.load()["default_n_procs"]
+
     case = Case(
         id=uuid.uuid4().hex[:8],
         name=name,
         domain=template["domain"],
         template_id=template_id,
-        # deep copy: the template dict is module-level shared state, and an
-        # in-place edit of a case spec would otherwise corrupt every later case
-        spec=copy.deepcopy(template["spec"]),
+        spec=spec,
         status=CaseStatus.draft,
     )
     session.add(case)

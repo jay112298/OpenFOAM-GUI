@@ -6,6 +6,7 @@ import {
 import { api } from "@/lib/api";
 import { Button, Card, Field, Input, Select, Badge, Stat } from "@/components/ui";
 import { AirfoilPreview } from "@/components/AirfoilPreview";
+import { FieldViewer } from "@/components/FieldViewer";
 
 function NextBar({ goNext, disabled, label = "Next →" }) {
   return (
@@ -448,7 +449,7 @@ export function Run({ caseId, pipe, persist, markDone, goNext }) {
 }
 
 /* ---------------- Results ---------------- */
-export function Results({ caseId }) {
+export function Results({ caseId, field: specField }) {
   // auto-load on open; the button becomes a refresh
   const load = useQuery({
     queryKey: ["forces", caseId],
@@ -479,6 +480,10 @@ export function Results({ caseId }) {
       {data && !data.latest && (
         <p className="text-sm text-[var(--muted-foreground)] mt-4">No force data yet — run the solver first.</p>
       )}
+      <div className="mt-4">
+        <FieldViewer caseId={caseId} chord={specField("geometry.parameters.chord") ?? 1} />
+      </div>
+
       {data && data.history.length > 1 && (
         <Card className="mt-4">
           <div className="text-sm font-semibold mb-3">Convergence history</div>

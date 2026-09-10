@@ -101,6 +101,36 @@ def test_mesh_is_reused_when_unchanged():
     client.delete(f"/api/cases/{cid}")
 
 
+def test_settings_round_trip():
+    """Settings persist to disk and feed new cases' default core count."""
+    before = client.get("/api/system/settings").json()
+    assert "openfoam_image" in before["values"]
+    assert before["paths"]["cases_dir"]
+
+    r = client.put("/api/system/settings", json={"default_n_procs": 3})
+    assert r.status_code == 200
+    assert r.json()["values"]["default_n_procs"] == 3
+    assert client.get("/api/system/settings").json()["values"]["default_n_procs"] == 3
+
+    cid = client.post("/api/cases/", json={"name": "cores", "template": "airfoil"}).json()["id"]
+    spec = client.get(f"/api/cases/{cid}").json()["spec"]
+    assert spec["numerics"]["n_procs"] == 3
+
+    client.delete(f"/api/cases/{cid}")
+    client.put("/api/system/settings", json={"default_n_procs": before["values"]["default_n_procs"]})
+
+
+def test_fields_reports_not_ready_before_a_run():
+    """The Results tab must say 'nothing solved yet' rather than error."""
+    cid = client.post("/api/cases/", json={"name": "nofields", "template": "airfoil"}).json()["id"]
+    r = client.get(f"/api/results/{cid}/fields")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ready"] is False
+    assert body["fields"] == []
+    client.delete(f"/api/cases/{cid}")
+
+
 def test_sweep_create_and_status():
     base = client.post("/api/cases/", json={"name": "sweep-base", "template": "airfoil"}).json()["id"]
     r = client.post(
