@@ -63,6 +63,26 @@ def yplus_wall_treatment(ctx: "ValidationContext") -> Finding | None:
     return Finding("yplus-wall-treatment", Severity.ok, f"y+ target {yp:g} consistent with '{model}'.")
 
 
+def transition_model_mesh(ctx: "ValidationContext") -> Finding | None:
+    """kOmegaSSTLM only predicts transition on a wall-resolved mesh."""
+    if ctx.params.turbulence_model not in _LOWRE_MODELS:
+        return None
+    p = ctx.params
+    resolved = p.boundary_layers and p.target_yplus <= 5
+    if not resolved:
+        return Finding(
+            "transition-model-mesh", Severity.warn,
+            f"'{p.turbulence_model}' predicts laminar-turbulent transition, which needs a "
+            f"wall-resolved mesh (y+ ~ 1). This case has "
+            f"{'no boundary layers' if not p.boundary_layers else f'y+ target {p.target_yplus:g}'}.",
+            "Enable boundary layers and set target y+ ~ 1, or use kOmegaSST (fully turbulent).",
+        )
+    return Finding(
+        "transition-model-mesh", Severity.ok,
+        f"'{p.turbulence_model}' with a wall-resolved mesh (y+ target {p.target_yplus:g}).",
+    )
+
+
 def reynolds_model(ctx: "ValidationContext") -> Finding | None:
     re = ctx.derived.reynolds
     model = ctx.params.turbulence_model
@@ -170,6 +190,7 @@ def mesh_quality(ctx: "ValidationContext") -> Finding | None:
 ALL: list[Rule] = [
     mach_regime,
     yplus_wall_treatment,
+    transition_model_mesh,
     reynolds_model,
     turbulence_inlet_sanity,
     bc_completeness,

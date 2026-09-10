@@ -181,7 +181,8 @@ export function Physics({ field, setField, markDone, goNext }) {
           <Input type="number" step="0.001" value={field("physics.reference.turbulence_intensity") ?? ""}
             onChange={(e) => setField("physics.reference.turbulence_intensity", parseFloat(e.target.value))} />
         </Field>
-        <Field label="Turbulence model" help="Recommended: kOmegaSST (robust). kOmegaSSTLM adds laminar–turbulent transition.">
+        <Field label="Turbulence model"
+          help="kOmegaSST (robust, fully turbulent) is the default. kOmegaSSTLM predicts laminar–turbulent transition — it needs boundary layers with target y+ ~ 1, and preflight will warn if the mesh isn't wall-resolved.">
           <Select options={["kOmegaSST", "kOmegaSSTLM", "kEpsilon", "realizableKE"]}
             value={field("physics.turbulence_model") ?? "kOmegaSST"}
             onChange={(e) => setField("physics.turbulence_model", e.target.value)} />
