@@ -4,7 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { Lock } from "lucide-react";
 import { api, setSpecPath, getSpecPath } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui";
 import { Geometry, Mesh, Physics, Validate, Run, Results } from "./stages";
+
+const STATUS_SEVERITY = {
+  draft: "warn",
+  running: "warn",
+  completed: "pass",
+  failed: "fail",
+};
 
 // each stage gates the next: you can't open a stage until the previous is complete
 const STAGES = [
@@ -23,15 +31,38 @@ export function CaseView() {
     queryFn: () => api.getCase(id),
     retry: false,
   });
-  if (!caseData) return <div className="text-[var(--muted-foreground)]">Loading case…</div>;
-  return <Pipeline key={caseData.id} caseData={caseData} />;
+  // Server-side view of what's already done (mesh on disk, preflight, last run)
+  // so a reload doesn't re-lock stages whose work exists.
+  const { data: pipe, isLoading: pipeLoading } = useQuery({
+    queryKey: ["pipeline-status", id],
+    queryFn: () => api.pipelineStatus(id),
+    retry: false,
+  });
+  if (!caseData || pipeLoading) {
+    return <div className="text-[var(--muted-foreground)]">Loading case…</div>;
+  }
+  return <Pipeline key={caseData.id} caseData={caseData} pipe={pipe} />;
 }
 
-function Pipeline({ caseData }) {
+function seedDone(pipe) {
+  if (!pipe) return {};
+  const meshed = !!pipe.mesh?.exists;
+  const ran = pipe.latest_run?.status === "completed";
+  return {
+    // a mesh on disk means geometry and mesh were both completed earlier
+    geometry: meshed,
+    mesh: meshed,
+    physics: meshed,
+    validate: meshed && !!pipe.validation?.can_run,
+    run: ran,
+  };
+}
+
+function Pipeline({ caseData, pipe }) {
   const id = caseData.id;
   const [active, setActive] = useState("geometry");
   const [spec, setSpec] = useState(caseData.spec);
-  const [done, setDone] = useState({}); // stage key -> bool
+  const [done, setDone] = useState(() => seedDone(pipe)); // stage key -> bool
 
   const setField = (path, value) => setSpec((s) => setSpecPath(s, path, value));
   const field = (path) => getSpecPath(spec, path);
@@ -46,9 +77,12 @@ function Pipeline({ caseData }) {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold m-0 mb-1">{caseData.name}</h1>
+      <div className="flex items-center gap-3 mb-1">
+        <h1 className="text-2xl font-bold m-0">{caseData.name}</h1>
+        <Badge severity={STATUS_SEVERITY[caseData.status] || "warn"}>{caseData.status}</Badge>
+      </div>
       <p className="text-[var(--muted-foreground)] mt-0 mb-6 font-mono text-xs">
-        {id} · {caseData.domain} · status: {caseData.status}
+        {id} · {caseData.domain}
       </p>
 
       <div className="flex gap-1 border-b border-[var(--border)] mb-8">
@@ -79,6 +113,7 @@ function Pipeline({ caseData }) {
       <Active
         caseId={id}
         spec={spec}
+        pipe={pipe}
         field={field}
         setField={setField}
         persist={persist}

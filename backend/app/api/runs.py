@@ -1,5 +1,7 @@
 """Run stage: queue solves, stream live logs/residuals over WebSocket."""
 
+import contextlib
+
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlmodel import Session, select
 
@@ -32,6 +34,21 @@ async def list_runs(case_id: str | None = None, session: Session = Depends(get_s
     return session.exec(q).all()
 
 
+@router.get("/latest")
+async def latest(case_id: str, session: Session = Depends(get_session)):
+    """Most recent run for a case, so the UI can reattach its console after a reload."""
+    run = run_service.latest_run(session, case_id)
+    return run or {}
+
+
+@router.post("/{run_id}/stop")
+def stop(run_id: str, session: Session = Depends(get_session)):
+    try:
+        return run_service.stop_run(session, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @router.get("/{run_id}/status")
 async def status(run_id: str, session: Session = Depends(get_session)):
     return {"run_id": run_id, "status": run_service.run_status(session, run_id)}
@@ -39,15 +56,23 @@ async def status(run_id: str, session: Session = Depends(get_session)):
 
 @router.websocket("/ws/{run_id}")
 async def run_stream(websocket: WebSocket, run_id: str):
+    """Stream a run's prep + solver output.
+
+    The client disconnects freely (tab switch, reload, navigation), so every
+    send and the final close are guarded: once the socket is gone, sending
+    again raises and would otherwise surface as a server error.
+    """
     await websocket.accept()
     session = Session(engine)
     try:
         async for event in run_service.stream(run_id, session):
             await websocket.send_json(event)
-    except WebSocketDisconnect:
-        pass
+    except (WebSocketDisconnect, RuntimeError):
+        pass  # client went away mid-stream
     except Exception as exc:  # noqa: BLE001
-        await websocket.send_json({"error": str(exc)})
+        with contextlib.suppress(Exception):
+            await websocket.send_json({"error": str(exc)})
     finally:
         session.close()
-        await websocket.close()
+        with contextlib.suppress(Exception):
+            await websocket.close()

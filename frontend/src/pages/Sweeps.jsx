@@ -4,7 +4,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { api } from "@/lib/api";
-import { Button, Card, Field, Input, Select } from "@/components/ui";
+import { Badge, Button, Card, Field, Input, Select } from "@/components/ui";
 
 export function Sweeps() {
   const qc = useQueryClient();
@@ -55,20 +55,87 @@ export function Sweeps() {
 }
 
 function SweepCard({ sweep }) {
+  const qc = useQueryClient();
+  // poll while the queue is running so the polar and per-case rows fill in live
+  // refetchIntervalInBackground: the queue must keep updating even when this
+  // browser tab isn't focused (a sweep runs for minutes).
+  const { data: st } = useQuery({
+    queryKey: ["sweep-status", sweep.id],
+    queryFn: () => api.sweepStatus(sweep.id),
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.queue?.running ? 2000 : false),
+    refetchIntervalInBackground: true,
+  });
   const { data } = useQuery({
     queryKey: ["polar", sweep.id],
     queryFn: () => api.polar(sweep.id),
     retry: false,
+    refetchInterval: st?.queue?.running ? 5000 : false,
+    refetchIntervalInBackground: true,
   });
+  const runAll = useMutation({
+    mutationFn: () => api.runSweep(sweep.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sweep-status", sweep.id] }),
+  });
+  const stopAll = useMutation({
+    mutationFn: () => api.stopSweep(sweep.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sweep-status", sweep.id] }),
+  });
+
   const points = (data?.points || []).map((p) => ({ aoa: p.value, cl: p.cl, cd: p.cd }));
   const haveData = points.some((p) => p.cl != null);
+  const running = !!st?.queue?.running;
+  const sev = { completed: "pass", failed: "fail", running: "warn", draft: "warn" };
 
   return (
     <Card className="mb-4">
-      <div className="text-sm font-semibold mb-1">{sweep.name}</div>
-      <div className="text-xs text-[var(--muted-foreground)] mb-3 font-mono">
-        {sweep.parameter} · {sweep.case_ids.length} cases
+      <div className="flex items-start justify-between gap-3 mb-1">
+        <div>
+          <div className="text-sm font-semibold">{sweep.name}</div>
+          <div className="text-xs text-[var(--muted-foreground)] font-mono">
+            {sweep.parameter} · {sweep.case_ids.length} cases
+            {st ? ` · ${st.done}/${st.total} done` : ""}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {running ? (
+            <Button variant="danger" onClick={() => stopAll.mutate()} disabled={stopAll.isPending}>
+              Stop queue
+            </Button>
+          ) : (
+            <Button onClick={() => runAll.mutate()} disabled={runAll.isPending}>
+              {runAll.isPending ? "Starting…" : "Run all"}
+            </Button>
+          )}
+        </div>
       </div>
+
+      {st && (
+        <div className="mb-3">
+          <div className="h-1.5 w-full bg-[var(--muted)] rounded overflow-hidden">
+            <div className="h-full bg-[var(--primary)] transition-all duration-500"
+              style={{ width: `${st.total ? (st.done / st.total) * 100 : 0}%` }} />
+          </div>
+          {running && (
+            <div className="text-[11px] text-[var(--muted-foreground)] mt-1">{st.queue.message}</div>
+          )}
+        </div>
+      )}
+
+      {st && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {st.children.map((c) => (
+            <span key={c.case_id}
+              className="text-[11px] px-2 py-1 rounded bg-[var(--secondary)] flex items-center gap-1.5">
+              <Badge severity={sev[c.status] || "warn"}>{c.status}</Badge>
+              <span className="font-mono">
+                {c.value}° {c.cl != null ? `· Cl ${c.cl.toFixed(3)} Cd ${c.cd.toFixed(4)}` : ""}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {haveData ? (
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={points}>
@@ -83,7 +150,7 @@ function SweepCard({ sweep }) {
         </ResponsiveContainer>
       ) : (
         <p className="text-sm text-[var(--muted-foreground)]">
-          No results yet — run the child cases to populate the polar.
+          No results yet — hit “Run all” to solve every case in this sweep; the polar fills in as they finish.
         </p>
       )}
     </Card>

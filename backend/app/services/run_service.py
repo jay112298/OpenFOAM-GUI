@@ -87,16 +87,72 @@ def _prepare_and_submit(run_id: str, case_id: str) -> None:
             s.commit()
 
 
+def reconcile(session: Session, run: Run) -> Run:
+    """Sync a run's stored status with its container.
+
+    Runs are normally finalized by the WebSocket stream, but nothing is attached
+    when the browser is closed mid-solve — without this a finished run would sit
+    at `running` forever (and stopping it would wrongly mark it cancelled).
+    """
+    if run is None or run.status != RunStatus.running or run.container_id is None:
+        return run
+    actual = _runner.status(run.container_id)
+    if actual in ("completed", "failed"):
+        _finalize(session, run)
+        session.refresh(run)
+    return run
+
+
 def run_status(session: Session, run_id: str) -> str:
     run = session.get(Run, run_id)
     if run is None:
         return "unknown"
-    if run.container_id is None:
-        return run.status.value
-    return _runner.status(run.container_id)
+    reconcile(session, run)
+    return run.status.value
+
+
+def latest_run(session: Session, case_id: str) -> Run | None:
+    """Most recent run for a case — lets the UI reattach after a reload/tab switch."""
+    from sqlmodel import select
+
+    runs = session.exec(select(Run).where(Run.case_id == case_id)).all()
+    if not runs:
+        return None
+    run = max(runs, key=lambda r: r.created_at)
+    return reconcile(session, run)
+
+
+def stop_run(session: Session, run_id: str) -> Run:
+    """Stop a running solve: kill the container, mark the run cancelled.
+
+    If the container already finished, record the real outcome instead.
+    """
+    run = session.get(Run, run_id)
+    if run is None:
+        raise ValueError("run not found")
+    reconcile(session, run)
+    if run.status in (RunStatus.completed, RunStatus.failed, RunStatus.cancelled):
+        return run
+    if run.container_id:
+        _runner.cancel(run.container_id)
+    run.status = RunStatus.cancelled
+    run.finished_at = datetime.now(timezone.utc)
+    case = session.get(Case, run.case_id)
+    if case is not None:
+        case.status = CaseStatus.failed  # not a completed solve
+        session.add(case)
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    _progress.pop(run_id, None)
+    return run
 
 
 def _finalize(session: Session, run: Run) -> str:
+    # A cancelled run keeps its status (the container was killed deliberately).
+    if run.status == RunStatus.cancelled:
+        _progress.pop(run.id, None)
+        return run.status.value
     status = _runner.status(run.container_id) if run.container_id else "failed"
     run.status = RunStatus.completed if status == "completed" else RunStatus.failed
     run.finished_at = datetime.now(timezone.utc)
@@ -142,6 +198,13 @@ async def stream(run_id: str, session: Session):
     gmsh_off = gmsh_log.stat().st_size if gmsh_log.exists() else 0
     sent = 0
 
+    # Reattaching to a finished run: replay its container log, then report status.
+    # (Docker replays the full log from the start, so the console/chart rebuild.)
+    if run.status in (RunStatus.cancelled,) and run.container_id is None:
+        yield {"log": "[prep] run was cancelled before it started", "prep": True}
+        yield {"done": True, "status": run.status.value}
+        return
+
     # --- phase 1: preparation ---
     while run.container_id is None:
         msgs = _progress.get(run_id, [])
@@ -153,8 +216,12 @@ async def stream(run_id: str, session: Session):
             yield {"log": f"[gmsh] {line}", "prep": True}
         session.expire_all()
         run = session.get(Run, run_id)
-        if run.status == RunStatus.failed:
-            yield {"error": "run failed during preparation", "done": True, "status": "failed"}
+        if run.status in (RunStatus.failed, RunStatus.cancelled):
+            yield {
+                "error": f"run {run.status.value} during preparation",
+                "done": True,
+                "status": run.status.value,
+            }
             return
         await asyncio.sleep(0.3)
 

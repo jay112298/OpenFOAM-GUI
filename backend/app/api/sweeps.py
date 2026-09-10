@@ -33,6 +33,28 @@ async def create_sweep(body: CreateSweepBody, session: Session = Depends(get_ses
         raise HTTPException(status_code=404, detail=str(exc))
 
 
+@router.post("/{sweep_id}/run")
+def run_all(sweep_id: str, session: Session = Depends(get_session)):
+    """Run every child case of the sweep, one after another."""
+    try:
+        return sweeps_service.run_all(session, sweep_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/{sweep_id}/stop")
+async def stop_all(sweep_id: str):
+    return sweeps_service.stop_all(sweep_id)
+
+
+@router.get("/{sweep_id}/status")
+async def status(sweep_id: str, session: Session = Depends(get_session)):
+    try:
+        return sweeps_service.status(session, sweep_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @router.get("/{sweep_id}/polar")
 async def polar(sweep_id: str, session: Session = Depends(get_session)):
     try:

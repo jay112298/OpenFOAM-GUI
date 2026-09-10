@@ -4,6 +4,7 @@ and the validation engine together. The API layer calls into here.
 
 from __future__ import annotations
 
+import copy
 import shutil
 import uuid
 from pathlib import Path
@@ -30,7 +31,9 @@ def create_case(session: Session, name: str, template_id: str = "airfoil") -> Ca
         name=name,
         domain=template["domain"],
         template_id=template_id,
-        spec=template["spec"],
+        # deep copy: the template dict is module-level shared state, and an
+        # in-place edit of a case spec would otherwise corrupt every later case
+        spec=copy.deepcopy(template["spec"]),
         status=CaseStatus.draft,
     )
     session.add(case)
@@ -58,6 +61,35 @@ def generate(session: Session, case: Case, force_mesh: bool = True) -> dict:
         "velocity_vector": list(st.velocity_vector),
         "n_cells": n_cells,
         "mesh_reused": st.mesh_reused,
+    }
+
+
+def pipeline_status(session: Session, case: Case) -> dict:
+    """What the pipeline has already achieved on disk / in the DB.
+
+    The UI seeds its stage gating from this so a page reload doesn't re-lock
+    tabs whose work is already done (mesh on disk, preflight passing, run done).
+    """
+    from app.parsers import forces
+    from app.services import run_service
+
+    d = case_dir(case.id)
+    ncells_file = d / "airfoil.ncells"
+    mesh_ready = (d / "airfoil.msh").exists()
+    report = validate(case)
+    last = run_service.latest_run(session, case.id)
+    return {
+        "mesh": {
+            "exists": mesh_ready,
+            "n_cells": int(ncells_file.read_text()) if ncells_file.exists() else None,
+        },
+        "validation": {"can_run": report["can_run"], "summary": report["summary"]},
+        "latest_run": (
+            {"id": last.id, "status": last.status.value, "container_id": last.container_id}
+            if last
+            else None
+        ),
+        "has_results": forces.latest(d) is not None,
     }
 
 
