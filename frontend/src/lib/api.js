@@ -26,6 +26,8 @@ const del = (path) => request(path, { method: "DELETE" });
 export const api = {
   health: () => request("/system/health"),
   dockerStatus: () => request("/system/docker"),
+  getSettings: () => request("/system/settings"),
+  saveSettings: (values) => put("/system/settings", values),
 
   // templates
   listTemplates: () => request("/templates/"),
@@ -65,6 +67,8 @@ export const api = {
   // results
   forces: (caseId) => request(`/results/${caseId}/forces`),
   openParaview: (caseId) => post(`/results/${caseId}/paraview`),
+  listFields: (caseId) => request(`/results/${caseId}/fields`),
+  fieldSlice: (caseId, name) => request(`/results/${caseId}/field?name=${encodeURIComponent(name)}`),
 
   // benchmarks
   listBenchmarks: () => request("/benchmarks/"),

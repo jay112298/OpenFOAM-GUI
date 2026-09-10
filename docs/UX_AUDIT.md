@@ -25,7 +25,7 @@ for upcoming development.
 | 8 | **No way to stop a run.** Divergence or a wrong setting means waiting for the container to finish. | Stop button → `POST /runs/{id}/stop` → container killed, run `cancelled` | [fixed] |
 | 9 | **Delete is instant** on Cases (trash icon) — no confirmation, and it removes the on-disk case dir. | Confirm dialog naming what is deleted | [fixed] |
 | 10 | **Sweeps are manual.** Creating a sweep makes N child cases you must open and run one by one. | "Run all" queue (sequential), live per-case status + progress, polar fills in | [fixed] |
-| 11 | **Settings page is a placeholder.** Image tag, data dir, default cores are all hard-coded / env-only. | Real settings form (image, cases dir, default cores, units) | open |
+| 11 | **Settings page is a placeholder.** Image tag, data dir, default cores are all hard-coded / env-only. | Real form: OpenFOAM image, default cores (applied to new cases), storage paths + disk use, environment checks | [fixed] |
 | 12 | **Solver log auto-scroll can't be paused**; reading earlier output while it streams is impossible. | auto-scroll toggle on the console | [fixed] |
 | 13 | **Run tab state is lost on tab switch / reload** — the console comes back empty even though the solve continues. | Reattach to the case's latest run on mount; Docker replays the full log so console, chart and metrics rebuild | [fixed] |
 | 13b | **Stage completion is lost on page reload.** Refreshing a case re-locks every tab. | `GET /cases/{id}/pipeline-status` (mesh on disk, preflight, last run) seeds the gating | [fixed] |
@@ -77,6 +77,8 @@ Product follow-up worth doing (turns this class of loss into a non-event):
 | 20 | No empty/loading states on Sweeps (blank while the query loads). | Skeleton or spinner. |
 | 21 | Validation WARN "Override" gives no visual confirmation the override was logged. | Toggle to "Overridden ✓" and keep it in the report. |
 | 22 | Dark theme only; no light mode. | Theme tokens already exist — add a toggle. |
+| 23 | **No responsive layout.** The sidebar is a fixed 240px, so below ~700px the content column collapses to a few pixels (spotted while testing in a narrow pane — the field canvas rendered 0-wide). | Collapse the sidebar to icons under a breakpoint; give `main` a min-width. |
+| 24 | Field viewer is fixed to a mid-span slice with preset zooms. | Pan/zoom by drag and wheel; probe a value on hover; contour lines. |
 
 ## Positive findings (keep)
 

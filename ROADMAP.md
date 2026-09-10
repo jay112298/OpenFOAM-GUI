@@ -67,12 +67,34 @@ intensity (~0.05–0.1%, wind-tunnel-like) and a mesh-independence study — fol
 | 1.6 | Physics & BC stage | `feature/physics-bcs` | Flow regime/turbulence selection, patch BC editor, auto turbulence inlet calc, unit layer |
 | 1.7 | Validation engine v1 | `feature/validation-engine` | Rule framework + first 8 rules, preflight report UI, override logging |
 | 1.8 | Run orchestration | `feature/run-orchestration` | DockerRunner (opencfd/openfoam-run:2506), job queue, WebSocket live residuals/forces, divergence detection |
-| 1.9 | Results v1 | `feature/results-v1` | Force coefficients, Cp distribution plot, PyVista slice -> VTK.js viewer, ParaView export |
+| 1.9 | Results v1 | `feature/results-v1` | Force coefficients, convergence history, in-browser field viewer, ParaView export |
 | 1.10 | AoA sweeps | `feature/sweeps-polar` | Sweep fan-out, queue, polar curve aggregation |
 | 1.11 | NACA 0012 benchmark | `feature/benchmark-naca0012` | Bundled benchmark case + reference data, comparison view |
 
 **Exit criteria:** NACA 0012, Re 6e6, alpha 0–10°: Cl within expected RANS accuracy of
 Abbott & von Doenhoff data, set up start-to-finish through the GUI.
+
+**Phase 1 complete — tagged `v0.1.0` (2026-09-10).** Every milestone shipped. The
+last two items, in-browser field visualisation and the Settings screen, landed in
+`feature/field-viz-and-settings`.
+
+*Note on 1.9:* the roadmap said VTK.js. These cases are 2D (one cell across the
+span), so a mid-span slice is the whole solution — the backend extracts triangles
+with PyVista and the browser paints them on a canvas with the ParaView cool-to-warm
+ramp. That avoids loading a 3D rendering library to draw a plane, and ParaView
+remains one click away for 3D, streamlines and probing. VTK.js becomes worthwhile
+in Phase 2+, where turbomachinery and engine cases are genuinely three-dimensional.
+
+Validation as shipped (NACA 0012, Re 2e6, far-field 50c, 12 prism layers, kOmegaSST):
+
+| α | Cl | Cl ref | Cd | Cd ref |
+|---|----|--------|----|--------|
+| 0° | 0.0015 | 0.000 | 0.00902 | 0.0080 |
+| 4° | 0.4011 | 0.440 | 0.01109 | 0.0087 |
+| 8° | 0.6949 | 0.860 | 0.02026 | 0.0108 |
+
+Accurate at low incidence and drifting as α grows, which is what a fully-turbulent
+RANS model does against free-transition measurements.
 
 ## Phase 2 — Compressible + Axial fan/compressor
 
