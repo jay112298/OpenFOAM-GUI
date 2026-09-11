@@ -124,6 +124,65 @@ def test_transition_model_warns_without_resolved_wall():
     assert report["can_run"] is True
 
 
+def _spec(flow_type="incompressible", velocity=30.0, **ref):
+    reference = {"velocity": velocity, "angle_of_attack": 0, "turbulence_intensity": 0.01}
+    reference.update(ref)
+    return {
+        "geometry": {"parameters": {"designation": "0012", "chord": 1.0}},
+        "physics": {"flow_type": flow_type, "fluid": {"name": "air"},
+                    "turbulence_model": "kOmegaSST", "reference": reference},
+        "mesh": {"parameters": {"farfield_radius": 12, "boundary_layers": False, "target_yplus": 30}},
+        "numerics": {"solver": "simpleFoam"},
+    }
+
+
+def test_compressible_freestream_is_ideal_gas():
+    """Density, viscosity and sound speed must all follow from p and T."""
+    p = AirfoilParams(flow_type="compressible", velocity=170.0)
+    st = derive(p)
+    assert st.solver == "rhoSimpleFoam"
+    assert abs(st.density - 101325 / (287.058 * 288.15)) < 1e-3   # ideal gas
+    assert abs(st.mach - 170 / (1.4 * 287.058 * 288.15) ** 0.5) < 1e-6
+    # incompressible path is unaffected
+    assert derive(AirfoilParams()).solver == "simpleFoam"
+
+
+def test_compressible_case_writes_thermo_fields(tmp_path):
+    build_case(_spec("compressible", 170.0, temperature=288.15, pressure=101325.0), tmp_path)
+    assert (tmp_path / "0/T").exists()
+    assert (tmp_path / "0/alphat").exists()
+    assert (tmp_path / "constant/thermophysicalProperties").exists()
+    assert not (tmp_path / "constant/transportProperties").exists()
+
+    # absolute pressure in Pa, not kinematic
+    p_text = (tmp_path / "0/p").read_text()
+    assert "[1 -1 -2 0 0 0 0]" in p_text
+    assert "101325" in p_text
+    assert "rhoSimpleFoam" in (tmp_path / "system/controlDict").read_text()
+    assert "div(phi,e)" in (tmp_path / "system/fvSchemes").read_text()
+
+
+def test_incompressible_case_has_no_thermo(tmp_path):
+    build_case(_spec("incompressible", 30.0), tmp_path)
+    assert (tmp_path / "constant/transportProperties").exists()
+    assert not (tmp_path / "constant/thermophysicalProperties").exists()
+    assert not (tmp_path / "0/T").exists()
+    assert "[0 2 -2 0 0 0 0]" in (tmp_path / "0/p").read_text()  # kinematic
+
+
+def test_mach_rule_follows_the_flow_type():
+    # incompressible above Mach 0.3 is blocked
+    fast = preflight_report(_spec("incompressible", 150.0))
+    assert fast["can_run"] is False
+    # the same speed as a compressible case is fine
+    ok = preflight_report(_spec("compressible", 150.0))
+    assert ok["can_run"] is True
+    # compressible far below Mach 0.3 is flagged as needlessly stiff
+    slow = [f for f in preflight_report(_spec("compressible", 20.0))["findings"]
+            if f["rule_id"] == "mach-regime"]
+    assert slow and slow[0]["severity"] == "warn"
+
+
 def test_validation_passes_good_case():
     spec = {
         "geometry": {"parameters": {"designation": "0012", "chord": 1.0}},

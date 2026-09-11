@@ -53,3 +53,35 @@ AIRFOIL_TEMPLATE = {
         {"key": "numerics.n_procs", "label": "CPU cores", "type": "number", "min": 1, "help": "Parallel solve via decomposePar + mpirun."},
     ],
 }
+
+
+def _compressible_spec() -> dict:
+    """Same airfoil pipeline, solved with rhoSimpleFoam at a high-subsonic speed."""
+    import copy
+
+    spec = copy.deepcopy(AIRFOIL_TEMPLATE["spec"])
+    spec["physics"]["flow_type"] = "compressible"
+    spec["physics"]["reference"].update(
+        {
+            "velocity": 170.0,        # ~Mach 0.5 at sea level
+            "temperature": 288.15,    # K
+            "pressure": 101325.0,     # Pa
+        }
+    )
+    spec["numerics"]["solver"] = "rhoSimpleFoam"
+    return spec
+
+
+AIRFOIL_COMPRESSIBLE_TEMPLATE = {
+    "id": "airfoil_compressible",
+    "name": "Airfoil — compressible (high speed)",
+    "domain": "aero",
+    "description": "2D external aerodynamics at high subsonic speed. Solves the energy "
+    "equation with rhoSimpleFoam, so density and temperature vary through the flow.",
+    "spec": _compressible_spec(),
+    "fields": AIRFOIL_TEMPLATE["fields"]
+    + [
+        {"key": "physics.reference.temperature", "label": "Freestream temperature", "unit": "K", "type": "number", "min": 100, "help": "Sea-level standard is 288.15 K. Sets the speed of sound, so it sets Mach."},
+        {"key": "physics.reference.pressure", "label": "Freestream pressure", "unit": "Pa", "type": "number", "min": 1000, "help": "Sea-level standard is 101325 Pa. With temperature this fixes the density."},
+    ],
+}

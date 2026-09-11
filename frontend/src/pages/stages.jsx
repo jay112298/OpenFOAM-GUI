@@ -188,10 +188,29 @@ export function Physics({ field, setField, markDone, goNext }) {
             value={field("physics.turbulence_model") ?? "kOmegaSST"}
             onChange={(e) => setField("physics.turbulence_model", e.target.value)} />
         </Field>
-        <Field label="Fluid">
-          <Select options={["air", "water"]} value={field("physics.fluid.name") ?? "air"}
-            onChange={(e) => setField("physics.fluid.name", e.target.value)} />
+        <Field label="Flow type"
+          help="Incompressible (simpleFoam) below Mach 0.3. Compressible (rhoSimpleFoam) solves the energy equation and lets density vary — needed above Mach 0.3.">
+          <Select options={["incompressible", "compressible"]}
+            value={field("physics.flow_type") ?? "incompressible"}
+            onChange={(e) => setField("physics.flow_type", e.target.value)} />
         </Field>
+        {field("physics.flow_type") === "compressible" ? (
+          <>
+            <Field label="Freestream temperature" unit="K" help="288.15 K at sea level. Sets the speed of sound, so it sets Mach.">
+              <Input type="number" value={field("physics.reference.temperature") ?? 288.15}
+                onChange={(e) => setField("physics.reference.temperature", parseFloat(e.target.value))} />
+            </Field>
+            <Field label="Freestream pressure" unit="Pa" help="101325 Pa at sea level. With temperature this fixes density.">
+              <Input type="number" value={field("physics.reference.pressure") ?? 101325}
+                onChange={(e) => setField("physics.reference.pressure", parseFloat(e.target.value))} />
+            </Field>
+          </>
+        ) : (
+          <Field label="Fluid">
+            <Select options={["air", "water"]} value={field("physics.fluid.name") ?? "air"}
+              onChange={(e) => setField("physics.fluid.name", e.target.value)} />
+          </Field>
+        )}
         <p className="text-xs text-[var(--muted-foreground)]">
           BCs are generated automatically: <code>freestream</code> on the far field,
           <code> noSlip</code> + wall functions on the airfoil. Turbulence inlet (k, omega) are computed.
