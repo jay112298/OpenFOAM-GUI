@@ -106,6 +106,12 @@ RANS model does against free-transition measurements.
 | 2.4 | Parametric blade/cascade generator | `feature/turbo-mrf` | **done** |
 | 2.5 | Fan/compressor map sweeps (RPM, mass flow), efficiency post | `feature/turbo-maps` | **done** |
 
+**Phase 2 complete (2026-09-11)** — every milestone shipped and validated in the
+real container. The platform now carries two domains through one pipeline
+(`aero` and `turbo`), compressible as well as incompressible flow, and sweeps
+that produce both a polar and a fan map. Per the branch strategy below, this
+marks a release: `develop` -> `main`, tagged `v0.2.0`.
+
 **2.1 / 2.2 shipped (2026-09-11).** Flow type is part of the case spec: choosing
 *compressible* switches the pipeline to rhoSimpleFoam with `hePsiThermo` /
 `perfectGas` / Sutherland air, absolute pressure in Pa, and T + alphat fields.
