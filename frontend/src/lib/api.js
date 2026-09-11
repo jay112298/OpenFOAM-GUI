@@ -47,6 +47,7 @@ export const api = {
   // geometry / mesh
   naca: (designation, chord = 1.0, n = 120) =>
     post("/geometry/naca", { designation, chord, n }),
+  blade: (params) => post("/geometry/blade", params),
   yplus: (velocity, length, fluid, target_yplus) =>
     post("/meshing/yplus", { velocity, length, fluid, target_yplus }),
 
@@ -66,6 +67,7 @@ export const api = {
 
   // results
   forces: (caseId) => request(`/results/${caseId}/forces`),
+  fanPerformance: (caseId) => request(`/results/${caseId}/fan`),
   openParaview: (caseId) => post(`/results/${caseId}/paraview`),
   listFields: (caseId) => request(`/results/${caseId}/fields`),
   fieldSlice: (caseId, name) => request(`/results/${caseId}/field?name=${encodeURIComponent(name)}`),

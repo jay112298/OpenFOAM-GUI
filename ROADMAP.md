@@ -102,9 +102,9 @@ RANS model does against free-transition measurements.
 |---|-----------|--------|-------|
 | 2.1 | Compressible templates (rhoSimpleFoam, energy eq, ideal gas) | `feature/compressible-solver` | **done** |
 | 2.2 | Mach-aware validation rules | `feature/compressible-solver` | **done** |
-| 2.3 | Rotating zone wizard: MRF, single passage, cyclicAMI periodics | `feature/turbo-mrf` |
-| 2.4 | Parametric blade/cascade generator | `feature/geometry-blade` |
-| 2.5 | Fan/compressor map sweeps (RPM, mass flow), efficiency post | `feature/turbo-maps` |
+| 2.3 | Rotating zone wizard: MRF, single passage, cyclicAMI periodics | `feature/turbo-mrf` | **done** |
+| 2.4 | Parametric blade/cascade generator | `feature/turbo-mrf` | **done** |
+| 2.5 | Fan/compressor map sweeps (RPM, mass flow), efficiency post | `feature/turbo-maps` | efficiency post done; sweeps open |
 
 **2.1 / 2.2 shipped (2026-09-11).** Flow type is part of the case spec: choosing
 *compressible* switches the pipeline to rhoSimpleFoam with `hePsiThermo` /
@@ -123,6 +123,51 @@ freestream. Compressibility is genuinely being solved, not assumed away.
 energy equation (iteration 211, then 687). Fixed by upwinding e/K/Ekp, softening
 the density and energy relaxation, bounding pressure with pMinFactor/pMaxFactor,
 and adding a `limitTemperature` fvOption. It now runs the full schedule.
+
+**2.3 / 2.4 shipped (2026-09-11).** A second domain now runs the same pipeline
+end to end: `turbo`. One blade passage of an axial fan rotor, 360/n_blades wide,
+closed by rotational `cyclicAMI`, with the blade carved out by snappyHexMesh and
+the whole zone spun as an MRF rotor.
+
+The blade is parametric and **its twist is derived, never typed**: at every
+radius the chord is set at the requested incidence to the relative inflow angle
+`atan(omega r / Va)`. The GUI shows that table hub-to-tip next to a to-scale
+blade-to-blade (cascade) view with the periodic planes marked, so a bad RPM or
+through-flow is visible before anything is meshed. The blade STL is written
+three times, one blade pitch apart, so a highly staggered blade that reaches
+across its own periodic plane still cuts both sides identically.
+
+Verified in the real container (6 blades, hub/tip 60/150 mm, 50 mm chord,
+3000 rpm, 12 m/s axial, 27k cells, converged to 5e-6 in 14 s on 4 cores):
+
+| Quantity | Value | Cross-check |
+|---|---|---|
+| Flow rate | 0.712 m³/s | design 0.713 — continuity holds |
+| Total pressure rise | 206 Pa | Euler `rho U Vtheta` = 212 Pa |
+| Exit swirl | 5.3 m/s, in the direction of rotation | work is added, not extracted |
+| Shaft torque / power | 0.619 N·m / 194 W | |
+| Total-to-total efficiency | 75.6% | plausible for a rotor with no stator |
+| AMI weight sum | 0.998–1.000 | the periodic couple is geometrically exact |
+
+*MRF note, and the subtle failure it caused:* `nonRotatingPatches` must list
+every patch of the zone that is not a surface turning with the shaft. MRF treats
+anything else as a rotating wall — it forces the relative flux to zero and
+overwrites the velocity with `omega x r`. With only the casing listed, the inlet
+and outlet were silently sealed (`sum(phi) = 0` through both) and the solver
+happily converged on a fan churning a closed box, reporting a 458 Pa total
+pressure *drop*. There is now a regression test asserting the exclusion list.
+
+Also in this milestone: generators became a registry keyed by domain
+(`app/services/generators/__init__.py`) so the case service, run service and
+validation engine never branch on the domain; validation rules are registered
+per domain (15 turbo rules); and the long-written `checkMesh` parser is finally
+wired into preflight, so mesh quality is a real finding for both domains.
+
+*Known limitations of the passage case:* no tip clearance (the blade is sealed
+to the casing), rotor only (no stator, so the exit swirl is lost), constant
+chord, and checkMesh's strict `-allGeometry` pass still flags concave cells and
+a few low-quality tet decompositions on the snapped mesh — reported as a WARN
+rather than hidden.
 
 ## Phase 3 — Engine ports + Duct acoustics
 

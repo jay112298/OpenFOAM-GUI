@@ -22,4 +22,9 @@ export default defineConfig([
       },
     },
   },
+  {
+    // build config runs in Node, not the browser (__dirname, process, ...)
+    files: ['vite.config.js', 'eslint.config.js'],
+    languageOptions: { globals: globals.node },
+  },
 ])

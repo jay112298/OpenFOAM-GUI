@@ -25,9 +25,16 @@ Pipeline pattern, identical for every domain (aero/turbo/engine):
 - **Case spec** = one versioned JSON document (`app/models/case.py: CaseSpec`)
   holding all stages. Templates are pre-filled specs. Generators and the
   validation engine both consume it.
+- **Generator registry** (`app/services/generators/__init__.py`): `spec["domain"]`
+  picks the module (`aero` -> airfoil_case, `turbo` -> axial_fan_case). Every
+  generator exposes the same surface — `Params.from_spec`, `derive`,
+  `build_case`, `summary`, `mesh_ready`, `mesh_cell_count`, `MESH_LOG` — so the
+  case service, run service and validation engine never branch on the domain.
+  Add a domain by adding a module + rule set, not by adding `if` statements.
 - **Validation engine** (`app/services/validation/engine.py`): rules return
   PASS/WARN/FAIL. FAIL blocks the run. WARN is overridable; overrides are
-  logged to the `ValidationOverride` table. Never bypass this gate.
+  logged to the `ValidationOverride` table. Never bypass this gate. Rules are
+  registered per domain in `RULES_BY_DOMAIN` (`rules.py` aero, `rules_turbo.py`).
 - **Runner protocol** (`app/services/runner/base.py`): API code depends only on
   the protocol. DockerRunner uses image `opencfd/openfoam-run:2506` (same image
   scheme as the user's ~/CFD/openfoam-docker script).

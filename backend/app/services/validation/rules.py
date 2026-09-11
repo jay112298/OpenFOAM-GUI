@@ -189,11 +189,31 @@ def aoa_range(ctx: "ValidationContext") -> Finding | None:
 
 
 def mesh_quality(ctx: "ValidationContext") -> Finding | None:
+    """Fed by the checkMesh log, so it stays silent until the mesher has run.
+
+    Domain-independent — the turbo rule set imports this one.
+    """
     m = ctx.mesh_metrics
     if not m:
         return None  # only evaluated once checkMesh has run
     max_nonortho = m.get("maxNonOrtho")
     max_skew = m.get("maxSkewness")
+    if not m.get("meshOK", True):
+        numbers = ", ".join(
+            part
+            for part in (
+                f"max non-orthogonality {max_nonortho:.0f}°" if max_nonortho is not None else "",
+                f"max skewness {max_skew:.1f}" if max_skew is not None else "",
+            )
+            if part
+        )
+        return Finding(
+            "mesh-quality", Severity.warn,
+            "checkMesh flagged the mesh (skewness, concave cells or tet decomposition)"
+            + (f": {numbers}." if numbers else "."),
+            "The solver will usually still run; treat the numbers as indicative and refine "
+            "the mesh if the residuals stall. log.checkMesh has the detail.",
+        )
     if max_nonortho is not None and max_nonortho > 70:
         return Finding(
             "mesh-quality", Severity.warn,
