@@ -94,15 +94,19 @@ export function Benchmarks() {
               <YAxis stroke="var(--muted-foreground)" fontSize={11} />
               <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
               <Legend />
-              <Line type="monotone" dataKey="clRef" name="Cl (reference)" stroke="#3b82f6" dot={false} />
-              <Line type="monotone" dataKey="cdRef" name="Cd (reference)" stroke="#ef4444" dot={false} />
+              {/* isAnimationActive={false}: Recharts' line-draw animation can stick at
+                  frame 0 (stroke-dasharray "0, len") and leave the curve invisible. */}
+              <Line type="monotone" dataKey="clRef" name="Cl (reference)" stroke="#3b82f6"
+                dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="cdRef" name="Cd (reference)" stroke="#ef4444"
+                dot={false} isAnimationActive={false} />
               {sweepId && (
                 <Line type="monotone" dataKey="clYours" name="Cl (yours)" stroke="#3b82f6"
-                  strokeDasharray="5 3" connectNulls />
+                  strokeDasharray="5 3" connectNulls isAnimationActive={false} />
               )}
               {sweepId && (
                 <Line type="monotone" dataKey="cdYours" name="Cd (yours)" stroke="#ef4444"
-                  strokeDasharray="5 3" connectNulls />
+                  strokeDasharray="5 3" connectNulls isAnimationActive={false} />
               )}
             </LineChart>
           </ResponsiveContainer>
