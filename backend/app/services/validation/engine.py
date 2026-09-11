@@ -13,8 +13,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import Enum
-
-from app.services.generators.airfoil_case import AirfoilParams, DerivedState, derive
+from typing import Any
 
 
 class Severity(str, Enum):
@@ -39,25 +38,38 @@ class Finding:
 @dataclass
 class ValidationContext:
     spec: dict
-    params: AirfoilParams
-    derived: DerivedState
+    # the domain's own params/derived dataclasses — rules are registered per
+    # domain, so each rule set knows exactly what it is looking at
+    params: Any
+    derived: Any
+    domain: str = "aero"
     mesh_metrics: dict | None = None  # populated after checkMesh
 
 
 def build_context(spec: dict) -> ValidationContext:
-    params = AirfoilParams.from_spec(spec)
-    return ValidationContext(spec=spec, params=params, derived=derive(params))
+    from app.services import generators
+
+    domain = spec.get("domain", generators.DEFAULT_DOMAIN)
+    gen = generators.for_domain(domain)
+    params = gen.Params.from_spec(spec)
+    return ValidationContext(spec=spec, params=params, derived=gen.derive(params), domain=domain)
 
 
 # --- import rules after Finding/Severity defined to avoid cycle ---
 from app.services.validation import rules as _rules  # noqa: E402
+from app.services.validation import rules_turbo as _rules_turbo  # noqa: E402
 
-RULES = _rules.ALL
+RULES_BY_DOMAIN = {"aero": _rules.ALL, "turbo": _rules_turbo.ALL}
+RULES = _rules.ALL  # default / aero
+
+
+def rules_for(domain: str) -> list:
+    return RULES_BY_DOMAIN.get(domain, RULES)
 
 
 def run_rules(ctx: ValidationContext) -> list[Finding]:
     findings: list[Finding] = []
-    for rule in RULES:
+    for rule in rules_for(ctx.domain):
         result = rule(ctx)
         if result is not None:
             findings.append(result)

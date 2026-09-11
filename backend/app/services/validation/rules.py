@@ -21,14 +21,36 @@ _LOWRE_MODELS = {"kOmegaSSTLM", "kOmegaSSTSAS"}
 
 
 def mach_regime(ctx: "ValidationContext") -> Finding | None:
+    """Match the flow regime to the solver.
+
+    The solver follows from the case's flow type (simpleFoam / rhoSimpleFoam),
+    so this checks the *physics choice*: incompressible above Mach 0.3 is wrong,
+    and compressible far below it is needlessly stiff.
+    """
     ma = ctx.derived.mach
-    solver = ctx.spec.get("numerics", {}).get("solver", "simpleFoam")
-    incompressible = solver in {"simpleFoam", "pimpleFoam", "pisoFoam", "icoFoam"}
-    if incompressible and ma > 0.3:
+    solver = ctx.derived.solver
+    if ctx.params.flow_type == "compressible":
+        if ma > 0.7:
+            return Finding(
+                "mach-regime", Severity.warn,
+                f"Mach {ma:.2f} is transonic — shocks are likely and '{solver}' resolves them poorly.",
+                "Expect convergence trouble; a density-based solver (rhoCentralFoam) suits Mach > 0.7.",
+            )
+        if ma < 0.1:
+            return Finding(
+                "mach-regime", Severity.warn,
+                f"Mach {ma:.2f} is effectively incompressible, but this case solves the energy equation.",
+                "Switch the flow type to incompressible — simpleFoam converges faster and more robustly.",
+            )
+        return Finding("mach-regime", Severity.ok,
+                       f"Mach {ma:.2f} — compressible solver '{solver}' is the right choice.")
+
+    if ma > 0.3:
         return Finding(
             "mach-regime", Severity.fail,
-            f"Mach {ma:.2f} exceeds 0.3 but solver '{solver}' is incompressible.",
-            "Use a compressible solver (rhoSimpleFoam) or reduce the velocity.",
+            f"Mach {ma:.2f} exceeds 0.3 but this case is incompressible ('{solver}'), "
+            "so density changes the solution ignores would be significant.",
+            "Set the flow type to compressible (rhoSimpleFoam), or reduce the velocity.",
         )
     return Finding("mach-regime", Severity.ok, f"Mach {ma:.2f} — incompressible assumption valid.")
 
@@ -167,11 +189,31 @@ def aoa_range(ctx: "ValidationContext") -> Finding | None:
 
 
 def mesh_quality(ctx: "ValidationContext") -> Finding | None:
+    """Fed by the checkMesh log, so it stays silent until the mesher has run.
+
+    Domain-independent — the turbo rule set imports this one.
+    """
     m = ctx.mesh_metrics
     if not m:
         return None  # only evaluated once checkMesh has run
     max_nonortho = m.get("maxNonOrtho")
     max_skew = m.get("maxSkewness")
+    if not m.get("meshOK", True):
+        numbers = ", ".join(
+            part
+            for part in (
+                f"max non-orthogonality {max_nonortho:.0f}°" if max_nonortho is not None else "",
+                f"max skewness {max_skew:.1f}" if max_skew is not None else "",
+            )
+            if part
+        )
+        return Finding(
+            "mesh-quality", Severity.warn,
+            "checkMesh flagged the mesh (skewness, concave cells or tet decomposition)"
+            + (f": {numbers}." if numbers else "."),
+            "The solver will usually still run; treat the numbers as indicative and refine "
+            "the mesh if the residuals stall. log.checkMesh has the detail.",
+        )
     if max_nonortho is not None and max_nonortho > 70:
         return Finding(
             "mesh-quality", Severity.warn,

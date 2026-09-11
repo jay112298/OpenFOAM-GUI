@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Wind } from "lucide-react";
+import { Fan, Flame, Wind } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button, Card, Field, Input } from "@/components/ui";
 import { cn } from "@/lib/utils";
+
+const DOMAIN_ICON = { aero: Wind, turbo: Fan, engine: Flame };
 
 export function NewCase() {
   const navigate = useNavigate();
@@ -33,23 +35,31 @@ export function NewCase() {
         </Field>
 
         <div className="text-sm font-medium mb-2">Template</div>
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          {templates.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTemplate(t.id)}
-              className={cn(
-                "p-4 rounded-xl border text-left cursor-pointer transition-all",
-                template === t.id
-                  ? "border-[var(--primary)] bg-[var(--primary)]/10"
-                  : "border-[var(--border)] hover:border-[var(--primary)]/50"
-              )}
-            >
-              <Wind className="w-6 h-6 text-[var(--primary)] mb-2" />
-              <div className="font-semibold">{t.name}</div>
-              <div className="text-xs text-[var(--muted-foreground)] mt-1">{t.description}</div>
-            </button>
-          ))}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+          {templates.map((t) => {
+            const Icon = DOMAIN_ICON[t.domain] ?? Wind;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTemplate(t.id)}
+                className={cn(
+                  "p-4 rounded-xl border text-left cursor-pointer transition-all",
+                  template === t.id
+                    ? "border-[var(--primary)] bg-[var(--primary)]/10"
+                    : "border-[var(--border)] hover:border-[var(--primary)]/50"
+                )}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <Icon className="w-6 h-6 text-[var(--primary)]" />
+                  <span className="text-[10px] uppercase tracking-wide text-[var(--muted-foreground)]">
+                    {t.domain}
+                  </span>
+                </div>
+                <div className="font-semibold">{t.name}</div>
+                <div className="text-xs text-[var(--muted-foreground)] mt-1">{t.description}</div>
+              </button>
+            );
+          })}
         </div>
 
         {create.isError && (

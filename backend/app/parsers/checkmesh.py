@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 
-_NONORTHO = re.compile(r"Max non-orthogonality = ([\d.eE+-]+)")
+# checkMesh phrases this one differently from the rest:
+#   "Mesh non-orthogonality Max: 64.6 average: 9.7"
+_NONORTHO = re.compile(r"non-orthogonality (?:Max: |= )([\d.eE+-]+)", re.IGNORECASE)
 _SKEW = re.compile(r"Max skewness = ([\d.eE+-]+)")
 _ASPECT = re.compile(r"Max aspect ratio = ([\d.eE+-]+)")
 _CELLS = re.compile(r"cells:\s+(\d+)")

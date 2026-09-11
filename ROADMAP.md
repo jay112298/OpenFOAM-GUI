@@ -98,13 +98,139 @@ RANS model does against free-transition measurements.
 
 ## Phase 2 — Compressible + Axial fan/compressor
 
-| # | Milestone | Branch |
-|---|-----------|--------|
-| 2.1 | Compressible templates (rhoSimpleFoam, total p/T BCs, energy eq) | `feature/compressible` |
-| 2.2 | Mach-aware validation rules | `feature/validation-mach` |
-| 2.3 | Rotating zone wizard: MRF, single passage, cyclicAMI periodics | `feature/turbo-mrf` |
-| 2.4 | Parametric blade/cascade generator | `feature/geometry-blade` |
-| 2.5 | Fan/compressor map sweeps (RPM, mass flow), efficiency post | `feature/turbo-maps` |
+| # | Milestone | Branch | State |
+|---|-----------|--------|-------|
+| 2.1 | Compressible templates (rhoSimpleFoam, energy eq, ideal gas) | `feature/compressible-solver` | **done** |
+| 2.2 | Mach-aware validation rules | `feature/compressible-solver` | **done** |
+| 2.3 | Rotating zone wizard: MRF, single passage, cyclicAMI periodics | `feature/turbo-mrf` | **done** |
+| 2.4 | Parametric blade/cascade generator | `feature/turbo-mrf` | **done** |
+| 2.5 | Fan/compressor map sweeps (RPM, mass flow), efficiency post | `feature/turbo-maps` | **done** |
+
+**Phase 2 complete (2026-09-11)** — every milestone shipped and validated in the
+real container. The platform now carries two domains through one pipeline
+(`aero` and `turbo`), compressible as well as incompressible flow, and sweeps
+that produce both a polar and a fan map. Per the branch strategy below, this
+marks a release: `develop` -> `main`, tagged `v0.2.0`.
+
+**2.1 / 2.2 shipped (2026-09-11).** Flow type is part of the case spec: choosing
+*compressible* switches the pipeline to rhoSimpleFoam with `hePsiThermo` /
+`perfectGas` / Sutherland air, absolute pressure in Pa, and T + alphat fields.
+Freestream density, viscosity and sound speed all follow from p and T, so Mach is
+derived rather than assumed. The Mach rule now reads the flow type: incompressible
+above Mach 0.3 still fails, compressible below Mach 0.1 warns as needlessly stiff,
+and above Mach 0.7 warns that shocks need a density-based solver.
+
+Verified NACA 0012 at Mach 0.5, α = 2°: **Cl 0.220** (thin-airfoil 0.219,
+Prandtl–Glauert 0.253 — viscous RANS lands at ~87% of the corrected value),
+with temperature 242–334 K and pressure 86.7–122.6 kPa around a 288 K / 101.3 kPa
+freestream. Compressibility is genuinely being solved, not assumed away.
+
+*Stability note:* the first attempts died on a floating point exception in the
+energy equation (iteration 211, then 687). Fixed by upwinding e/K/Ekp, softening
+the density and energy relaxation, bounding pressure with pMinFactor/pMaxFactor,
+and adding a `limitTemperature` fvOption. It now runs the full schedule.
+
+**2.3 / 2.4 shipped (2026-09-11).** A second domain now runs the same pipeline
+end to end: `turbo`. One blade passage of an axial fan rotor, 360/n_blades wide,
+closed by rotational `cyclicAMI`, with the blade carved out by snappyHexMesh and
+the whole zone spun as an MRF rotor.
+
+The blade is parametric and **its twist is derived, never typed**: at every
+radius the chord is set at the requested incidence to the relative inflow angle
+`atan(omega r / Va)`. The GUI shows that table hub-to-tip next to a to-scale
+blade-to-blade (cascade) view with the periodic planes marked, so a bad RPM or
+through-flow is visible before anything is meshed. The blade STL is written
+three times, one blade pitch apart, so a highly staggered blade that reaches
+across its own periodic plane still cuts both sides identically.
+
+Verified in the real container (6 blades, hub/tip 60/150 mm, 50 mm chord,
+3000 rpm, 12 m/s axial, 27k cells, converged to 5e-6 in 14 s on 4 cores):
+
+| Quantity | Value | Cross-check |
+|---|---|---|
+| Flow rate | 0.712 m³/s | design 0.713 — continuity holds |
+| Total pressure rise | 206 Pa | Euler `rho U Vtheta` = 212 Pa |
+| Exit swirl | 5.3 m/s, in the direction of rotation | work is added, not extracted |
+| Shaft torque / power | 0.619 N·m / 194 W | |
+| Total-to-total efficiency | 75.6% | plausible for a rotor with no stator |
+| AMI weight sum | 0.998–1.000 | the periodic couple is geometrically exact |
+
+*MRF note, and the subtle failure it caused:* `nonRotatingPatches` must list
+every patch of the zone that is not a surface turning with the shaft. MRF treats
+anything else as a rotating wall — it forces the relative flux to zero and
+overwrites the velocity with `omega x r`. With only the casing listed, the inlet
+and outlet were silently sealed (`sum(phi) = 0` through both) and the solver
+happily converged on a fan churning a closed box, reporting a 458 Pa total
+pressure *drop*. There is now a regression test asserting the exclusion list.
+
+Also in this milestone: generators became a registry keyed by domain
+(`app/services/generators/__init__.py`) so the case service, run service and
+validation engine never branch on the domain; validation rules are registered
+per domain (15 turbo rules); and the long-written `checkMesh` parser is finally
+wired into preflight, so mesh quality is a real finding for both domains.
+
+*Known limitations of the passage case:* no tip clearance (the blade is sealed
+to the casing), rotor only (no stator, so the exit swirl is lost), constant
+chord, and checkMesh's strict `-allGeometry` pass still flags concave cells and
+a few low-quality tet decompositions on the snapped mesh — reported as a WARN
+rather than hidden.
+
+**2.5 shipped (2026-09-11).** Sweeps take a second axis, so a fan map is a
+single object: flow rate along each speed line, one speed line per RPM, with
+total pressure rise and total-to-total efficiency plotted against Q.
+
+The change that makes a map mean anything is **separating the design point from
+the operating point**. The blade's twist is derived from RPM and through-flow;
+sweeping either without pinning would re-cut the blade at every point, so the
+"map" would describe a different fan at each mark. `geometry.parameters.
+design_rpm` / `design_axial_velocity` now hold the point the blade was cut for,
+and creating a turbo sweep pins them to the base case's own operating point.
+Everything downstream follows: the mesh signature keys off the design point, so
+one blade is meshed once and carried across the whole map.
+
+Pinning also produces the number a fan engineer actually wants. The metal angles
+are fixed; off design the flow arrives from somewhere else; the gap is the
+**incidence**, reported per radius in the GUI and checked by preflight — beyond
+15° it warns that the point is stalled (or that the blade is being driven
+rather than driving) and should be read as qualitative.
+
+Measured map — blade cut for 3000 rpm / 12 m/s, then run across two speed lines
+(600 iterations per point, mesh built once per child):
+
+| Va [m/s] | rpm | Q [m³/s] | Δp₀ [Pa] | η |
+|---|---|---|---|---|
+| 6 | 2400 | 0.356 | 186.6 | 61.2% |
+| 9 | 2400 | 0.534 | 137.9 | **70.2%** |
+| 12 | 2400 | 0.712 | 52.1 | 58.1% |
+| 15 | 2400 | 0.890 | −51.7 | — |
+| 18 | 2400 | 1.068 | −162.1 | — |
+| 6 | 3000 | 0.356 | 247.5 | 41.0% |
+| 9 | 3000 | 0.534 | 266.1 | 65.4% |
+| 12 | 3000 | 0.712 | 206.3 | **75.6%** |
+| 15 | 3000 | 0.890 | 81.4 | 58.5% |
+| 18 | 3000 | 1.068 | −45.4 | — |
+
+Two things in there say the whole chain is behaving. Peak efficiency on the
+3000 rpm line lands exactly on the point the blade was cut for (12 m/s, 75.6%).
+On the 2400 rpm line it moves to 9 m/s — phi = 0.239 against the design 0.255,
+i.e. **peak efficiency tracks constant flow coefficient, not constant flow**,
+which is the fan law. Each line also crosses into negative Δp₀ at high flow:
+free delivery, past which the rotor is no longer pumping.
+
+That last part exposed a reporting bug, now fixed: efficiency was being printed
+as −1150% at those points, because air power goes negative while shaft power
+falls through zero. It is reported as undefined instead, and the efficiency
+curve stops rather than bridging the gap.
+
+*Cost note:* throttled points converge much more slowly than design points —
+the separated passage needs far more pressure-solver work per iteration — so
+the cheap end of a map is the high-flow end. The queue runs cases sequentially
+on purpose: each solve already uses the configured cores.
+
+Also here: `Sweep` gained `parameter2`, `values2`, `domain` and `points`, and
+`db.init_db()` now adds columns missing from existing tables, because
+`create_all` only creates missing *tables* and the SQLite file predates these
+fields. Aggregation moved from `/polar` to a domain-aware `/results`.
 
 ## Phase 3 — Engine ports + Duct acoustics
 

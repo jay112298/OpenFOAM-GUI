@@ -47,6 +47,7 @@ export const api = {
   // geometry / mesh
   naca: (designation, chord = 1.0, n = 120) =>
     post("/geometry/naca", { designation, chord, n }),
+  blade: (params) => post("/geometry/blade", params),
   yplus: (velocity, length, fluid, target_yplus) =>
     post("/meshing/yplus", { velocity, length, fluid, target_yplus }),
 
@@ -66,6 +67,7 @@ export const api = {
 
   // results
   forces: (caseId) => request(`/results/${caseId}/forces`),
+  fanPerformance: (caseId) => request(`/results/${caseId}/fan`),
   openParaview: (caseId) => post(`/results/${caseId}/paraview`),
   listFields: (caseId) => request(`/results/${caseId}/fields`),
   fieldSlice: (caseId, name) => request(`/results/${caseId}/field?name=${encodeURIComponent(name)}`),
@@ -76,9 +78,8 @@ export const api = {
 
   // sweeps
   listSweeps: () => request("/sweeps/"),
-  createSweep: (base_case_id, values, parameter, name) =>
-    post("/sweeps/", { base_case_id, values, parameter, name }),
-  polar: (sweepId) => request(`/sweeps/${sweepId}/polar`),
+  createSweep: (body) => post("/sweeps/", body),
+  sweepResults: (sweepId) => request(`/sweeps/${sweepId}/results`),
   sweepStatus: (sweepId) => request(`/sweeps/${sweepId}/status`),
   runSweep: (sweepId) => post(`/sweeps/${sweepId}/run`),
   stopSweep: (sweepId) => post(`/sweeps/${sweepId}/stop`),

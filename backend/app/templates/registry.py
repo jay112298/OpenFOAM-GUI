@@ -1,8 +1,12 @@
-"""Template registry. Phase 1 ships the airfoil template; more per roadmap."""
+"""Template registry. One entry per ready-to-run case type; see ROADMAP."""
 
-from app.templates.airfoil import AIRFOIL_TEMPLATE
+from app.templates.airfoil import AIRFOIL_COMPRESSIBLE_TEMPLATE, AIRFOIL_TEMPLATE
+from app.templates.axial_fan import AXIAL_FAN_TEMPLATE
 
-TEMPLATES = {AIRFOIL_TEMPLATE["id"]: AIRFOIL_TEMPLATE}
+TEMPLATES = {
+    t["id"]: t
+    for t in (AIRFOIL_TEMPLATE, AIRFOIL_COMPRESSIBLE_TEMPLATE, AXIAL_FAN_TEMPLATE)
+}
 
 
 def list_templates() -> list[dict]:
