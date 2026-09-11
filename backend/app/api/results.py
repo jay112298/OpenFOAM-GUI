@@ -4,9 +4,25 @@ from fastapi import APIRouter, HTTPException
 
 from app.parsers import forces
 from app.services import case_service
-from app.services.post import fields, paraview
+from app.services.post import fan, fields, paraview
 
 router = APIRouter()
+
+
+@router.get("/{case_id}/fan")
+def fan_performance(case_id: str):
+    """Flow rate, total pressure rise, torque and efficiency for a turbo case."""
+    from sqlmodel import Session
+
+    from app.db import engine
+    from app.models.case import Case
+
+    with Session(engine) as session:
+        case = session.get(Case, case_id)
+        if case is None:
+            raise HTTPException(status_code=404, detail="case not found")
+        spec = case.spec
+    return fan.performance(case_service.case_dir(case_id), spec)
 
 
 @router.get("/{case_id}/fields")

@@ -33,6 +33,24 @@ from app.services.physics.turbulence import TRANSITION_MODELS, re_theta_t, turbu
 # the written OpenFOAM output is correct, so silence the noise.
 warnings.filterwarnings("ignore", category=UserWarning, module="foamlib")
 
+# Gmsh runs in-process here (see meshing/gmsh_airfoil), so the mesh log is the
+# file it redirects its own stdout into.
+MESH_LOG = "log.gmsh"
+
+
+def mesh_ready(case_dir: Path) -> bool:
+    return (case_dir / "airfoil.msh").exists()
+
+
+def mesh_cell_count(case_dir: Path) -> int | None:
+    f = case_dir / "airfoil.ncells"
+    if not f.exists():
+        return None
+    try:
+        return int(f.read_text().strip())
+    except ValueError:
+        return None
+
 
 @dataclass
 class AirfoilParams:
@@ -652,3 +670,19 @@ echo "DONE"
     path = case_dir / "Allrun"
     path.write_text(script)
     path.chmod(0o755)
+
+
+# registry alias (see services/generators/__init__.py)
+Params = AirfoilParams
+
+
+def summary(st: DerivedState) -> dict:
+    """Derived quantities the Mesh tab shows after generating the case."""
+    return {
+        "reynolds": st.reynolds,
+        "mach": st.mach,
+        "k": st.k,
+        "omega": st.omega,
+        "first_cell_height": st.first_cell_height,
+        "velocity_vector": list(st.velocity_vector),
+    }

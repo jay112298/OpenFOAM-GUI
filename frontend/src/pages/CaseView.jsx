@@ -6,6 +6,7 @@ import { api, setSpecPath, getSpecPath } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui";
 import { Geometry, Mesh, Physics, Validate, Run, Results } from "./stages";
+import { TurboGeometry, TurboMesh, TurboPhysics, TurboResults } from "./stages_turbo";
 
 const STATUS_SEVERITY = {
   draft: "warn",
@@ -14,15 +15,26 @@ const STATUS_SEVERITY = {
   failed: "fail",
 };
 
-// each stage gates the next: you can't open a stage until the previous is complete
-const STAGES = [
-  { key: "geometry", label: "Geometry", Comp: Geometry, gate: "Preview the section first" },
-  { key: "mesh", label: "Mesh", Comp: Mesh, gate: "Generate the mesh first" },
-  { key: "physics", label: "Physics & BCs", Comp: Physics, gate: "Set flow conditions" },
-  { key: "validate", label: "Validate", Comp: Validate, gate: "Pass preflight (no FAIL)" },
-  { key: "run", label: "Run", Comp: Run, gate: "Finish the solve" },
-  { key: "results", label: "Results", Comp: Results, gate: "" },
-];
+// Each stage gates the next: you can't open a stage until the previous is
+// complete. The pipeline is the same for every domain — only the Geometry,
+// Mesh, Physics and Results panels differ, so each domain supplies its own.
+const stagesFor = (domain) => {
+  const turbo = domain === "turbo";
+  return [
+    {
+      key: "geometry", label: "Geometry", gate: turbo ? "Preview the blade first" : "Preview the section first",
+      Comp: turbo ? TurboGeometry : Geometry,
+    },
+    { key: "mesh", label: "Mesh", Comp: turbo ? TurboMesh : Mesh, gate: "Generate the mesh first" },
+    {
+      key: "physics", label: "Physics & BCs", Comp: turbo ? TurboPhysics : Physics,
+      gate: "Set flow conditions",
+    },
+    { key: "validate", label: "Validate", Comp: Validate, gate: "Pass preflight (no FAIL)" },
+    { key: "run", label: "Run", Comp: Run, gate: "Finish the solve" },
+    { key: "results", label: "Results", Comp: turbo ? TurboResults : Results, gate: "" },
+  ];
+};
 
 export function CaseView() {
   const { id } = useParams();
@@ -63,6 +75,7 @@ function Pipeline({ caseData, pipe }) {
   const [active, setActive] = useState("geometry");
   const [spec, setSpec] = useState(caseData.spec);
   const [done, setDone] = useState(() => seedDone(pipe)); // stage key -> bool
+  const STAGES = stagesFor(caseData.domain);
 
   const setField = (path, value) => setSpec((s) => setSpecPath(s, path, value));
   const field = (path) => getSpecPath(spec, path);
@@ -85,7 +98,9 @@ function Pipeline({ caseData, pipe }) {
         {id} · {caseData.domain}
       </p>
 
-      <div className="flex gap-1 border-b border-[var(--border)] mb-8">
+      {/* scrolls rather than clipping: at narrow widths the later stages were
+          unreachable because the tab row simply ran off the edge */}
+      <div className="flex gap-1 border-b border-[var(--border)] mb-8 overflow-x-auto">
         {STAGES.map((s, i) => {
           const locked = !unlocked(i);
           return (
@@ -95,7 +110,7 @@ function Pipeline({ caseData, pipe }) {
               disabled={locked}
               title={locked ? STAGES[i - 1]?.gate : ""}
               className={cn(
-                "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5",
+                "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 whitespace-nowrap",
                 locked ? "cursor-not-allowed text-[var(--muted)]" : "cursor-pointer",
                 active === s.key
                   ? "border-[var(--primary)] text-[var(--foreground)]"

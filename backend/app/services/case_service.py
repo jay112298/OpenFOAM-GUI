@@ -13,8 +13,7 @@ from sqlmodel import Session
 
 from app.config import settings
 from app.models.case import Case, CaseStatus
-from app.services import settings_service
-from app.services.generators.airfoil_case import build_case
+from app.services import generators, settings_service
 from app.services.validation.engine import preflight_report
 from app.templates.registry import get_template
 
@@ -51,20 +50,15 @@ def generate(session: Session, case: Case, force_mesh: bool = True) -> dict:
 
     force_mesh=False reuses an existing mesh whose signature still matches.
     """
+    gen = generators.for_spec(case.spec)
     d = case_dir(case.id)
     d.mkdir(parents=True, exist_ok=True)
-    st = build_case(case.spec, d, force_mesh=force_mesh)
-    ncells_file = d / "airfoil.ncells"
-    n_cells = int(ncells_file.read_text()) if ncells_file.exists() else None
+    st = gen.build_case(case.spec, d, force_mesh=force_mesh)
     return {
-        "reynolds": st.reynolds,
-        "mach": st.mach,
-        "k": st.k,
-        "omega": st.omega,
-        "first_cell_height": st.first_cell_height,
-        "velocity_vector": list(st.velocity_vector),
-        "n_cells": n_cells,
+        **gen.summary(st),
+        "n_cells": gen.mesh_cell_count(d),
         "mesh_reused": st.mesh_reused,
+        "domain": case.spec.get("domain", generators.DEFAULT_DOMAIN),
     }
 
 
@@ -74,18 +68,16 @@ def pipeline_status(session: Session, case: Case) -> dict:
     The UI seeds its stage gating from this so a page reload doesn't re-lock
     tabs whose work is already done (mesh on disk, preflight passing, run done).
     """
-    from app.parsers import forces
     from app.services import run_service
 
+    gen = generators.for_spec(case.spec)
     d = case_dir(case.id)
-    ncells_file = d / "airfoil.ncells"
-    mesh_ready = (d / "airfoil.msh").exists()
     report = validate(case)
     last = run_service.latest_run(session, case.id)
     return {
         "mesh": {
-            "exists": mesh_ready,
-            "n_cells": int(ncells_file.read_text()) if ncells_file.exists() else None,
+            "exists": gen.mesh_ready(d),
+            "n_cells": gen.mesh_cell_count(d),
         },
         "validation": {"can_run": report["can_run"], "summary": report["summary"]},
         "latest_run": (
@@ -93,22 +85,59 @@ def pipeline_status(session: Session, case: Case) -> dict:
             if last
             else None
         ),
-        "has_results": forces.latest(d) is not None,
+        "has_results": _has_results(case, d),
     }
 
 
+def _has_results(case: Case, d: Path) -> bool:
+    from app.parsers import forces
+    from app.services.post import fan
+
+    if case.spec.get("domain") == "turbo":
+        return bool(fan.history(d, case.spec))
+    return forces.latest(d) is not None
+
+
 def mesh_log(case_id: str, tail: int = 120) -> dict:
-    """Tail of the Gmsh log written while the mesh generates (for live progress)."""
-    p = case_dir(case_id) / "log.gmsh"
+    """Tail of the mesh log written while the mesh generates (for live progress).
+
+    Which file that is depends on the mesher — Gmsh writes its own log in
+    process, the passage mesher tees the container output — so ask the
+    generator rather than guessing.
+    """
+    from sqlmodel import Session
+
+    from app.db import engine as db_engine
+
+    with Session(db_engine) as s:
+        case = s.get(Case, case_id)
+    gen = generators.for_spec(case.spec if case else {})
+    p = case_dir(case_id) / gen.MESH_LOG
     if not p.exists():
         return {"lines": [], "done": False}
     lines = p.read_text(errors="replace").splitlines()
-    done = any(line.startswith("[gmsh] done") or line.startswith("[gmsh] ERROR") for line in lines)
+    done = any(_is_terminal(line) for line in lines)
     return {"lines": lines[-tail:], "done": done}
 
 
-def validate(case: Case, mesh_metrics: dict | None = None) -> dict:
-    return preflight_report(case.spec, mesh_metrics=mesh_metrics)
+def _is_terminal(line: str) -> bool:
+    return line.startswith(("[gmsh] done", "[gmsh] ERROR", "[mesh] done", "[mesh] ERROR"))
+
+
+def mesh_metrics(case_id: str) -> dict | None:
+    """checkMesh quality numbers, once the mesher has run."""
+    from app.parsers import checkmesh
+
+    log = case_dir(case_id) / "log.checkMesh"
+    if not log.exists():
+        return None
+    return checkmesh.parse(log.read_text(errors="replace"))
+
+
+def validate(case: Case, metrics: dict | None = None) -> dict:
+    """Preflight report. Mesh quality joins the checks as soon as checkMesh has
+    something to say — the rules stay silent until then."""
+    return preflight_report(case.spec, mesh_metrics=metrics or mesh_metrics(case.id))
 
 
 def delete_case(session: Session, case: Case) -> None:

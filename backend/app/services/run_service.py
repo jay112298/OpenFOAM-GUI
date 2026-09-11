@@ -194,8 +194,14 @@ async def stream(run_id: str, session: Session):
         yield {"error": "run not found", "done": True}
         return
 
-    gmsh_log = case_service.case_dir(run.case_id) / "log.gmsh"
-    gmsh_off = gmsh_log.stat().st_size if gmsh_log.exists() else 0
+    # which mesh log to relay during prep depends on the domain's mesher
+    from app.models.case import Case as _Case
+    from app.services import generators
+
+    case = session.get(_Case, run.case_id)
+    gen = generators.for_spec(case.spec if case else {})
+    mesh_log = case_service.case_dir(run.case_id) / gen.MESH_LOG
+    mesh_off = mesh_log.stat().st_size if mesh_log.exists() else 0
     sent = 0
 
     # Reattaching to a finished run: replay its container log, then report status.
@@ -211,9 +217,9 @@ async def stream(run_id: str, session: Session):
         while sent < len(msgs):
             yield {"log": msgs[sent], "prep": True}
             sent += 1
-        new, gmsh_off = _tail_new(gmsh_log, gmsh_off)
+        new, mesh_off = _tail_new(mesh_log, mesh_off)
         for line in new:
-            yield {"log": f"[gmsh] {line}", "prep": True}
+            yield {"log": line if line.startswith("[") else f"[mesh] {line}", "prep": True}
         session.expire_all()
         run = session.get(Run, run_id)
         if run.status in (RunStatus.failed, RunStatus.cancelled):

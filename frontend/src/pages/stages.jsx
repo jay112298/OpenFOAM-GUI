@@ -274,8 +274,10 @@ export function Validate({ caseId, persist, markDone, goNext }) {
 }
 
 /* ---------------- Run ---------------- */
-export function Run({ caseId, pipe, persist, markDone, goNext }) {
+export function Run({ caseId, spec, pipe, persist, markDone, goNext }) {
   const qc = useQueryClient();
+  // force coefficients only exist for the external-aero pipeline
+  const showForces = spec?.domain !== "turbo";
   const [logs, setLogs] = useState([]);
   const [finalStatus, setFinalStatus] = useState(null);
   const [runId, setRunId] = useState(null);
@@ -415,8 +417,8 @@ export function Run({ caseId, pipe, persist, markDone, goNext }) {
       {started && (
         <div className="grid grid-cols-4 gap-3 mt-5 sticky top-0 z-10 bg-[var(--background)] py-2">
           <Stat label="Iteration" value={time ?? "—"} />
-          <Stat label="Cl" value={forces ? forces.cl.toFixed(4) : "—"} />
-          <Stat label="Cd" value={forces ? forces.cd.toFixed(5) : "—"} />
+          {showForces && <Stat label="Cl" value={forces ? forces.cl.toFixed(4) : "—"} />}
+          {showForces && <Stat label="Cd" value={forces ? forces.cd.toFixed(5) : "—"} />}
           <Stat label="Courant max" value={courant ? courant.max.toFixed(2) : "—"} />
           {cont && <Stat label="Continuity (local)" value={cont.local.toExponential(2)} />}
           {layers && <Stat label="Layer coverage" value={`${layers.coverage.toFixed(0)}%`} />}
