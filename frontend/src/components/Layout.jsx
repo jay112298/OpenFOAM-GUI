@@ -34,11 +34,13 @@ export function Layout() {
 
   return (
     <div className="flex h-screen">
-      <aside className="w-60 border-r border-[var(--border)] bg-[var(--card)] flex flex-col">
-        <div className="p-5 border-b border-[var(--border)]">
-          <div className="flex items-center gap-3">
-            <Wind className="w-7 h-7 text-[var(--primary)]" />
-            <div>
+      {/* Below lg the sidebar collapses to icons — a fixed 240px rail used to
+          squeeze the content column to nothing in a narrow window. */}
+      <aside className="w-14 lg:w-60 shrink-0 border-r border-[var(--border)] bg-[var(--card)] flex flex-col">
+        <div className="p-3 lg:p-5 border-b border-[var(--border)]">
+          <div className="flex items-center gap-3 justify-center lg:justify-start">
+            <Wind className="w-7 h-7 shrink-0 text-[var(--primary)]" />
+            <div className="hidden lg:block">
               <h1 className="text-base font-bold m-0">OpenFOAM GUI</h1>
               <p className="text-xs text-[var(--muted-foreground)] m-0">
                 CFD Made Simple
@@ -47,43 +49,47 @@ export function Layout() {
           </div>
         </div>
 
-        <nav className="flex-1 p-3">
+        <nav className="flex-1 p-2 lg:p-3">
           {navItems.map(({ path, label, icon: Icon, end }) => (
             <NavLink
               key={path}
               to={path}
               end={end}
+              title={label}
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1 no-underline transition-colors text-sm font-medium",
+                  "justify-center lg:justify-start",
                   isActive
                     ? "bg-[var(--primary)] text-white"
                     : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
                 )
               }
             >
-              <Icon className="w-4 h-4" />
-              {label}
+              <Icon className="w-4 h-4 shrink-0" />
+              <span className="hidden lg:inline">{label}</span>
             </NavLink>
           ))}
         </nav>
 
-        <div className="p-4 border-t border-[var(--border)] flex items-center gap-2">
+        <div className="p-3 lg:p-4 border-t border-[var(--border)] flex items-center gap-2 justify-center lg:justify-start">
           <Box
+            title={docker?.connected ? "Docker connected" : "Docker offline"}
             className={cn(
-              "w-4 h-4",
+              "w-4 h-4 shrink-0",
               docker?.connected
                 ? "text-[var(--success)]"
                 : "text-[var(--destructive)]"
             )}
           />
-          <span className="text-xs text-[var(--muted-foreground)]">
+          <span className="hidden lg:inline text-xs text-[var(--muted-foreground)]">
             {docker?.connected ? "Docker connected" : "Docker offline"}
           </span>
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto p-8">
+      {/* min-w-0 so wide children (tables, canvas) shrink instead of pushing the page */}
+      <main className="flex-1 min-w-0 overflow-auto p-4 lg:p-8">
         <Outlet />
       </main>
     </div>

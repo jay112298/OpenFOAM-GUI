@@ -144,8 +144,9 @@ function SweepCard({ sweep }) {
             <YAxis stroke="var(--muted-foreground)" fontSize={11} />
             <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
             <Legend />
-            <Line type="monotone" dataKey="cl" name="Cl" stroke="#3b82f6" />
-            <Line type="monotone" dataKey="cd" name="Cd" stroke="#ef4444" />
+            {/* animation off: Recharts can leave the curve at dasharray "0, len" */}
+            <Line type="monotone" dataKey="cl" name="Cl" stroke="#3b82f6" isAnimationActive={false} />
+            <Line type="monotone" dataKey="cd" name="Cd" stroke="#ef4444" isAnimationActive={false} />
           </LineChart>
         </ResponsiveContainer>
       ) : (
