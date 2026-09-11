@@ -98,13 +98,31 @@ RANS model does against free-transition measurements.
 
 ## Phase 2 — Compressible + Axial fan/compressor
 
-| # | Milestone | Branch |
-|---|-----------|--------|
-| 2.1 | Compressible templates (rhoSimpleFoam, total p/T BCs, energy eq) | `feature/compressible` |
-| 2.2 | Mach-aware validation rules | `feature/validation-mach` |
+| # | Milestone | Branch | State |
+|---|-----------|--------|-------|
+| 2.1 | Compressible templates (rhoSimpleFoam, energy eq, ideal gas) | `feature/compressible-solver` | **done** |
+| 2.2 | Mach-aware validation rules | `feature/compressible-solver` | **done** |
 | 2.3 | Rotating zone wizard: MRF, single passage, cyclicAMI periodics | `feature/turbo-mrf` |
 | 2.4 | Parametric blade/cascade generator | `feature/geometry-blade` |
 | 2.5 | Fan/compressor map sweeps (RPM, mass flow), efficiency post | `feature/turbo-maps` |
+
+**2.1 / 2.2 shipped (2026-09-11).** Flow type is part of the case spec: choosing
+*compressible* switches the pipeline to rhoSimpleFoam with `hePsiThermo` /
+`perfectGas` / Sutherland air, absolute pressure in Pa, and T + alphat fields.
+Freestream density, viscosity and sound speed all follow from p and T, so Mach is
+derived rather than assumed. The Mach rule now reads the flow type: incompressible
+above Mach 0.3 still fails, compressible below Mach 0.1 warns as needlessly stiff,
+and above Mach 0.7 warns that shocks need a density-based solver.
+
+Verified NACA 0012 at Mach 0.5, α = 2°: **Cl 0.220** (thin-airfoil 0.219,
+Prandtl–Glauert 0.253 — viscous RANS lands at ~87% of the corrected value),
+with temperature 242–334 K and pressure 86.7–122.6 kPa around a 288 K / 101.3 kPa
+freestream. Compressibility is genuinely being solved, not assumed away.
+
+*Stability note:* the first attempts died on a floating point exception in the
+energy equation (iteration 211, then 687). Fixed by upwinding e/K/Ekp, softening
+the density and energy relaxation, bounding pressure with pMinFactor/pMaxFactor,
+and adding a `limitTemperature` fvOption. It now runs the full schedule.
 
 ## Phase 3 — Engine ports + Duct acoustics
 
