@@ -24,6 +24,18 @@ class BladeBody(BaseModel):
     rpm: float = 3000.0
     axial_velocity: float = 12.0
     incidence: float = 4.0
+    # the point the blade was cut for; unset means "the same as above"
+    design_rpm: float | None = None
+    design_axial_velocity: float | None = None
+
+    def design(self) -> dict:
+        d = self.model_dump(exclude={"design_rpm", "design_axial_velocity"})
+        d["rpm"] = self.design_rpm or self.rpm
+        d["axial_velocity"] = self.design_axial_velocity or self.axial_velocity
+        return d
+
+    def operating(self) -> dict:
+        return self.model_dump(exclude={"design_rpm", "design_axial_velocity"})
 
 
 @router.post("/naca")
@@ -44,14 +56,20 @@ async def generate_naca(body: NacaBody):
 def preview_blade(body: BladeBody):
     """Velocity triangles and section outlines for the axial blade preview.
 
-    `sections` is the hub-to-tip twist table the GUI shows; `cascade` is the
-    same blade drawn twice at the blade pitch on an unrolled cylinder at
-    mid-span, which is how the passage between two blades actually looks.
+    `sections` is the hub-to-tip twist table of the blade as cut; `cascade` is
+    the same blade drawn three times at the blade pitch on an unrolled cylinder
+    at mid-span, which is how the passage between blades actually looks.
+
+    When the blade was cut for a different point than the one being run, the
+    two differ, and `incidence_profile` is where that shows: the metal angle is
+    fixed, the flow arrives from somewhere else, and the gap between them is
+    the off-design incidence.
     """
     import math
 
     try:
-        spec = blade.BladeSpec(**body.model_dump())
+        spec = blade.BladeSpec(**body.design())
+        op = blade.BladeSpec(**body.operating())
         secs = blade.sections(spec, n=7)
         mid = spec.mean_radius
         outline = blade.section_outline(spec, mid)
@@ -59,12 +77,14 @@ def preview_blade(body: BladeBody):
         raise HTTPException(status_code=400, detail=str(exc))
 
     pitch = 2 * math.pi * mid / spec.n_blades
+    off_design = (spec.rpm, spec.axial_velocity) != (op.rpm, op.axial_velocity)
     return {
         "sector_angle": math.degrees(spec.sector_angle),
-        "tip_speed": spec.tip_speed,
-        "flow_coefficient": spec.flow_coefficient,
+        "tip_speed": op.tip_speed,
+        "flow_coefficient": op.flow_coefficient,
         "mean_radius": mid,
         "pitch": pitch,
+        "off_design": off_design,
         "cascade": {"outline": outline, "pitch": pitch},
         "sections": [
             {
@@ -75,6 +95,15 @@ def preview_blade(body: BladeBody):
                 "relative_speed": s.relative_speed,
                 "pitch": s.pitch,
                 "solidity": s.solidity,
+            }
+            for s in secs
+        ],
+        "incidence_profile": [
+            {
+                "radius": s.radius,
+                "stagger": s.stagger,
+                "relative_angle": (flow := blade.section_at(op, s.radius)).relative_angle,
+                "incidence": flow.relative_angle - s.stagger,
             }
             for s in secs
         ],

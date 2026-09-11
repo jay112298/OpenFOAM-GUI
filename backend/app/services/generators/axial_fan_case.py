@@ -59,7 +59,13 @@ class AxialFanParams:
     tip_radius: float = 0.15
     chord: float = 0.05
     incidence: float = 4.0
-    # operating point
+    # Design point — what the blade was twisted for. Left unset it follows the
+    # operating point below, which is what a single case wants. A fan map pins
+    # it instead, so one blade is carried across every speed and flow: the
+    # geometry (and therefore the mesh) then stops changing between runs.
+    design_rpm: float | None = None
+    design_axial_velocity: float | None = None
+    # operating point — the inlet BC and the MRF zone speed
     rpm: float = 3000.0
     axial_velocity: float = 12.0
     fluid: str = "air"
@@ -87,7 +93,8 @@ class AxialFanParams:
         m = spec.get("mesh", {}).get("parameters", {})
         n = spec.get("numerics", {})
         out = cls()
-        for key in ("designation", "n_blades", "hub_radius", "tip_radius", "chord", "incidence"):
+        for key in ("designation", "n_blades", "hub_radius", "tip_radius", "chord", "incidence",
+                    "design_rpm", "design_axial_velocity"):
             setattr(out, key, g.get(key, getattr(out, key)))
         for key in ("rpm", "axial_velocity", "turbulence_intensity"):
             setattr(out, key, ref.get(key, getattr(out, key)))
@@ -101,24 +108,55 @@ class AxialFanParams:
         return out
 
     def blade_spec(self) -> BladeSpec:
+        """The blade as cut: twisted for the design point."""
+        return self._spec_at(
+            self.design_rpm if self.design_rpm else self.rpm,
+            self.design_axial_velocity if self.design_axial_velocity else self.axial_velocity,
+        )
+
+    def operating_spec(self) -> BladeSpec:
+        """The same blade, with the velocity triangles of the point being run.
+
+        Off design these differ from `blade_spec()`, and the difference *is* the
+        off-design incidence — the thing that stalls a fan when it is throttled.
+        """
+        return self._spec_at(self.rpm, self.axial_velocity)
+
+    def is_off_design(self) -> bool:
+        d, o = self.blade_spec(), self.operating_spec()
+        return (d.rpm, d.axial_velocity) != (o.rpm, o.axial_velocity)
+
+    def _spec_at(self, rpm: float, axial_velocity: float) -> BladeSpec:
         return BladeSpec(
             designation=self.designation,
             n_blades=int(self.n_blades),
             hub_radius=self.hub_radius,
             tip_radius=self.tip_radius,
             chord=self.chord,
-            rpm=self.rpm,
-            axial_velocity=self.axial_velocity,
+            rpm=rpm,
+            axial_velocity=axial_velocity,
             incidence=self.incidence,
         )
+
+
+@dataclass
+class IncidenceStation:
+    """How the flow meets the blade at one radius, at the point being run."""
+
+    radius: float
+    stagger: float              # blade metal angle from axial [deg] — fixed by the cut
+    relative_angle: float       # where the flow actually comes from [deg]
+    incidence: float            # relative_angle - stagger [deg]
 
 
 @dataclass
 class FanState:
     """Everything the case, the GUI and the validation rules read."""
 
-    blade: BladeSpec
-    sections: list[BladeSection]
+    blade: BladeSpec            # the blade as cut (design point)
+    operating: BladeSpec        # the same blade at the point being run
+    sections: list[BladeSection]          # blade metal angles, hub to tip
+    incidence_profile: list[IncidenceStation]
     shaft_omega: float          # [rad/s]
     tip_speed: float            # [m/s]
     tip_mach: float             # relative Mach at the tip
@@ -128,29 +166,57 @@ class FanState:
     nu: float
     density: float
     first_cell_height: float
-    volumetric_flow: float      # design Q for the whole machine [m^3/s]
+    volumetric_flow: float      # Q through the whole machine at this point [m^3/s]
+    flow_coefficient: float     # phi = Va / U_tip, at this point
     solver: str = "simpleFoam"
     params: AxialFanParams = field(repr=False, default=None)  # type: ignore[assignment]
     mesh_reused: bool = False
     n_cells: int | None = None
 
+    @property
+    def off_design(self) -> bool:
+        return self.params is not None and self.params.is_off_design()
+
+    @property
+    def peak_incidence(self) -> IncidenceStation | None:
+        """The station working hardest — the first place the blade will stall."""
+        if not self.incidence_profile:
+            return None
+        return max(self.incidence_profile, key=lambda s: abs(s.incidence))
+
 
 def derive(params: AxialFanParams) -> FanState:
-    spec = params.blade_spec()
+    design = params.blade_spec()       # geometry: fixes the blade metal angles
+    op = params.operating_spec()       # this run: fixes the velocity triangles
     fluid = get_fluid(params.fluid)
-    mid = blade_geom.section_at(spec, spec.mean_radius)
-    tip = blade_geom.section_at(spec, spec.tip_radius)
+    mid = blade_geom.section_at(op, op.mean_radius)
+    tip = blade_geom.section_at(op, op.tip_radius)
 
     ti = turbulence_inlet(mid.relative_speed, params.turbulence_intensity, 0.07 * params.chord)
     fch = first_cell_height(
         mid.relative_speed, params.chord, fluid.nu, fluid.rho, params.target_yplus
     )
-    annulus = math.pi * (spec.tip_radius**2 - spec.hub_radius**2)
+    annulus = math.pi * (design.tip_radius**2 - design.hub_radius**2)
+
+    # at the design point this is flat at `incidence`; off design it is not,
+    # and how far it has moved is what decides whether the blade still works
+    profile = [
+        IncidenceStation(
+            radius=cut.radius,
+            stagger=cut.stagger,
+            relative_angle=(flow := blade_geom.section_at(op, cut.radius)).relative_angle,
+            incidence=flow.relative_angle - cut.stagger,
+        )
+        for cut in blade_geom.sections(design, n=7)
+    ]
+
     return FanState(
-        blade=spec,
-        sections=blade_geom.sections(spec),
-        shaft_omega=spec.omega,
-        tip_speed=spec.tip_speed,
+        blade=design,
+        operating=op,
+        sections=blade_geom.sections(design),
+        incidence_profile=profile,
+        shaft_omega=op.omega,
+        tip_speed=op.tip_speed,
         tip_mach=tip.relative_speed / fluid.a,
         reynolds=mid.relative_speed * params.chord / fluid.nu,
         k=ti.k,
@@ -159,6 +225,7 @@ def derive(params: AxialFanParams) -> FanState:
         density=fluid.rho,
         first_cell_height=fch.first_cell_height,
         volumetric_flow=annulus * params.axial_velocity,
+        flow_coefficient=op.flow_coefficient,
         params=params,
     )
 
@@ -208,15 +275,25 @@ def _cyl(r: float, theta: float, z: float) -> list[float]:
 
 
 def _mesh_signature(p: AxialFanParams, st: FanState) -> str:
-    """Anything that changes the mesh. Note the operating point is in here:
-    rpm and through-flow set the blade twist, so they are geometry."""
+    """Anything that changes the mesh.
+
+    The *design* point is in here because it twists the blade; the operating
+    point is not, so a fan map sweeping RPM and flow across one blade reuses
+    the same mesh at every point.
+    """
     s = _sector(p)
+    design = p.blade_spec()
     key = {
         "blade": [p.designation, p.n_blades, p.hub_radius, p.tip_radius, p.chord, p.incidence],
-        "twist": [p.rpm, p.axial_velocity],
+        "twist": [design.rpm, design.axial_velocity],
         "sector": [s.n_r, s.n_t, s.n_z, s.z_in, s.z_out],
-        "snappy": [p.refinement_level, p.boundary_layers, p.n_layers,
-                   float(f"{st.first_cell_height:.3g}")],
+        "snappy": [
+            p.refinement_level, p.boundary_layers, p.n_layers,
+            # the first-cell height only reaches the mesh through addLayers, and
+            # it tracks the operating speed — including it unconditionally would
+            # remesh at every point of a map for nothing
+            float(f"{st.first_cell_height:.3g}") if p.boundary_layers else None,
+        ],
     }
     return hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()
 
@@ -738,7 +815,8 @@ def summary(st: FanState) -> dict:
         "shaft_omega": st.shaft_omega,
         "tip_speed": st.tip_speed,
         "volumetric_flow": st.volumetric_flow,
-        "flow_coefficient": st.blade.flow_coefficient,
+        "flow_coefficient": st.flow_coefficient,
+        "off_design": st.off_design,
         "sections": [
             {
                 "radius": s.radius,
@@ -748,5 +826,14 @@ def summary(st: FanState) -> dict:
                 "solidity": s.solidity,
             }
             for s in st.sections
+        ],
+        "incidence_profile": [
+            {
+                "radius": s.radius,
+                "stagger": s.stagger,
+                "relative_angle": s.relative_angle,
+                "incidence": s.incidence,
+            }
+            for s in st.incidence_profile
         ],
     }

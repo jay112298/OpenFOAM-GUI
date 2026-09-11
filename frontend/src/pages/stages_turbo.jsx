@@ -33,7 +33,65 @@ function bladeParams(field) {
     incidence: field("geometry.parameters.incidence") ?? 4,
     rpm: field("physics.reference.rpm") ?? 3000,
     axial_velocity: field("physics.reference.axial_velocity") ?? 12,
+    // set on the children of a fan map: the blade is frozen at the base case's
+    // point while the operating point moves around it
+    design_rpm: field("geometry.parameters.design_rpm") ?? null,
+    design_axial_velocity: field("geometry.parameters.design_axial_velocity") ?? null,
   };
+}
+
+/** Off-design: the blade metal angle is fixed, the flow moved. That gap stalls fans. */
+function IncidenceTable({ blade }) {
+  if (!blade?.off_design || !blade.incidence_profile) return null;
+  const worst = blade.incidence_profile.reduce(
+    (a, b) => (Math.abs(b.incidence) > Math.abs(a.incidence) ? b : a)
+  );
+  const tone =
+    Math.abs(worst.incidence) > 15 ? "var(--destructive)"
+      : Math.abs(worst.incidence) > 8 ? "var(--warning)" : "var(--success)";
+  return (
+    <Card className="mt-4">
+      <div className="text-sm font-medium mb-1">Running off design</div>
+      <p className="text-xs text-[var(--muted-foreground)] mb-3">
+        This blade was cut for another point and is being run at this one. The metal angles are
+        fixed; the flow now arrives from somewhere else, and the difference is the incidence.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs font-mono">
+          <thead className="text-[var(--muted-foreground)]">
+            <tr>
+              <th className="text-left py-1">r [mm]</th>
+              <th className="text-right">blade [°]</th>
+              <th className="text-right">flow [°]</th>
+              <th className="text-right">incidence [°]</th>
+            </tr>
+          </thead>
+          <tbody>
+            {blade.incidence_profile.map((s) => (
+              <tr key={s.radius} className="border-t border-[var(--border)]">
+                <td className="py-1">{(s.radius * 1000).toFixed(0)}</td>
+                <td className="text-right">{s.stagger.toFixed(1)}</td>
+                <td className="text-right">{s.relative_angle.toFixed(1)}</td>
+                <td className="text-right font-semibold"
+                  style={{ color: s === worst ? tone : undefined }}>
+                  {s.incidence >= 0 ? "+" : ""}{s.incidence.toFixed(1)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs mt-2" style={{ color: tone }}>
+        Peak {worst.incidence >= 0 ? "+" : ""}{worst.incidence.toFixed(1)}° at r ={" "}
+        {(worst.radius * 1000).toFixed(0)} mm
+        {Math.abs(worst.incidence) > 15
+          ? worst.incidence > 0
+            ? " — deep stall territory; read this point as qualitative."
+            : " — the blade is being driven rather than driving."
+          : " — still in the attached range."}
+      </p>
+    </Card>
+  );
 }
 
 /* ---------------- Geometry ---------------- */
@@ -134,6 +192,7 @@ export function TurboGeometry({ field, setField, persist, markDone, goNext }) {
               </p>
             </Card>
           )}
+          <IncidenceTable blade={blade} />
         </div>
       </div>
       <NextBar goNext={goNext} disabled={!blade} />

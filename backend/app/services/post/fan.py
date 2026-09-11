@@ -104,6 +104,11 @@ def history(case_dir: Path, spec: dict) -> list[OperatingPoint]:
         shaft = omega * torque
         air = dp0 * q
         swirl = _swirl(u_out.get(t))
+        # Past free delivery the rotor stops pumping: dp0 goes negative while
+        # the shaft power falls through zero, and air/shaft is then a ratio of
+        # two quantities that no longer mean what efficiency means. Report it as
+        # undefined rather than as a large negative percentage.
+        efficiency = (air / shaft) if (dp0 > 0 and shaft > 1e-6) else None
         points.append(
             OperatingPoint(
                 time=t,
@@ -112,7 +117,7 @@ def history(case_dir: Path, spec: dict) -> list[OperatingPoint]:
                 torque=torque,
                 shaft_power=shaft,
                 air_power=air,
-                efficiency=(air / shaft) if shaft > 1e-9 else None,
+                efficiency=efficiency,
                 swirl=swirl,
                 flow_coefficient=params.axial_velocity / u_tip if u_tip else 0.0,
                 pressure_coefficient=dp0 / (rho * u_tip**2) if u_tip else 0.0,

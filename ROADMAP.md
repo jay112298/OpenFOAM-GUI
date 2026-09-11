@@ -104,7 +104,7 @@ RANS model does against free-transition measurements.
 | 2.2 | Mach-aware validation rules | `feature/compressible-solver` | **done** |
 | 2.3 | Rotating zone wizard: MRF, single passage, cyclicAMI periodics | `feature/turbo-mrf` | **done** |
 | 2.4 | Parametric blade/cascade generator | `feature/turbo-mrf` | **done** |
-| 2.5 | Fan/compressor map sweeps (RPM, mass flow), efficiency post | `feature/turbo-maps` | efficiency post done; sweeps open |
+| 2.5 | Fan/compressor map sweeps (RPM, mass flow), efficiency post | `feature/turbo-maps` | **done** |
 
 **2.1 / 2.2 shipped (2026-09-11).** Flow type is part of the case spec: choosing
 *compressible* switches the pipeline to rhoSimpleFoam with `hePsiThermo` /
@@ -168,6 +168,63 @@ to the casing), rotor only (no stator, so the exit swirl is lost), constant
 chord, and checkMesh's strict `-allGeometry` pass still flags concave cells and
 a few low-quality tet decompositions on the snapped mesh — reported as a WARN
 rather than hidden.
+
+**2.5 shipped (2026-09-11).** Sweeps take a second axis, so a fan map is a
+single object: flow rate along each speed line, one speed line per RPM, with
+total pressure rise and total-to-total efficiency plotted against Q.
+
+The change that makes a map mean anything is **separating the design point from
+the operating point**. The blade's twist is derived from RPM and through-flow;
+sweeping either without pinning would re-cut the blade at every point, so the
+"map" would describe a different fan at each mark. `geometry.parameters.
+design_rpm` / `design_axial_velocity` now hold the point the blade was cut for,
+and creating a turbo sweep pins them to the base case's own operating point.
+Everything downstream follows: the mesh signature keys off the design point, so
+one blade is meshed once and carried across the whole map.
+
+Pinning also produces the number a fan engineer actually wants. The metal angles
+are fixed; off design the flow arrives from somewhere else; the gap is the
+**incidence**, reported per radius in the GUI and checked by preflight — beyond
+15° it warns that the point is stalled (or that the blade is being driven
+rather than driving) and should be read as qualitative.
+
+Measured map — blade cut for 3000 rpm / 12 m/s, then run across two speed lines
+(600 iterations per point, mesh built once per child):
+
+| Va [m/s] | rpm | Q [m³/s] | Δp₀ [Pa] | η |
+|---|---|---|---|---|
+| 6 | 2400 | 0.356 | 186.6 | 61.2% |
+| 9 | 2400 | 0.534 | 137.9 | **70.2%** |
+| 12 | 2400 | 0.712 | 52.1 | 58.1% |
+| 15 | 2400 | 0.890 | −51.7 | — |
+| 18 | 2400 | 1.068 | −162.1 | — |
+| 6 | 3000 | 0.356 | 247.5 | 41.0% |
+| 9 | 3000 | 0.534 | 266.1 | 65.4% |
+| 12 | 3000 | 0.712 | 206.3 | **75.6%** |
+| 15 | 3000 | 0.890 | 81.4 | 58.5% |
+| 18 | 3000 | 1.068 | −45.4 | — |
+
+Two things in there say the whole chain is behaving. Peak efficiency on the
+3000 rpm line lands exactly on the point the blade was cut for (12 m/s, 75.6%).
+On the 2400 rpm line it moves to 9 m/s — phi = 0.239 against the design 0.255,
+i.e. **peak efficiency tracks constant flow coefficient, not constant flow**,
+which is the fan law. Each line also crosses into negative Δp₀ at high flow:
+free delivery, past which the rotor is no longer pumping.
+
+That last part exposed a reporting bug, now fixed: efficiency was being printed
+as −1150% at those points, because air power goes negative while shaft power
+falls through zero. It is reported as undefined instead, and the efficiency
+curve stops rather than bridging the gap.
+
+*Cost note:* throttled points converge much more slowly than design points —
+the separated passage needs far more pressure-solver work per iteration — so
+the cheap end of a map is the high-flow end. The queue runs cases sequentially
+on purpose: each solve already uses the configured cores.
+
+Also here: `Sweep` gained `parameter2`, `values2`, `domain` and `points`, and
+`db.init_db()` now adds columns missing from existing tables, because
+`create_all` only creates missing *tables* and the SQLite file predates these
+fields. Aggregation moved from `/polar` to a domain-aware `/results`.
 
 ## Phase 3 — Engine ports + Duct acoustics
 

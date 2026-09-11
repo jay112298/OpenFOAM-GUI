@@ -78,9 +78,8 @@ export const api = {
 
   // sweeps
   listSweeps: () => request("/sweeps/"),
-  createSweep: (base_case_id, values, parameter, name) =>
-    post("/sweeps/", { base_case_id, values, parameter, name }),
-  polar: (sweepId) => request(`/sweeps/${sweepId}/polar`),
+  createSweep: (body) => post("/sweeps/", body),
+  sweepResults: (sweepId) => request(`/sweeps/${sweepId}/results`),
   sweepStatus: (sweepId) => request(`/sweeps/${sweepId}/status`),
   runSweep: (sweepId) => post(`/sweeps/${sweepId}/run`),
   stopSweep: (sweepId) => post(`/sweeps/${sweepId}/stop`),

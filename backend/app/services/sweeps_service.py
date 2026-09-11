@@ -1,5 +1,6 @@
-"""Parameter sweeps: clone a base case spec across values of one parameter,
-creating child cases. Aggregation (e.g. polar curves) reads each child's forces.
+"""Parameter sweeps: clone a base case spec across one or two parameters,
+creating child cases. Aggregation reads each child's results — a polar for
+external aero, a fan/compressor map for turbomachinery.
 """
 
 from __future__ import annotations
@@ -18,6 +19,14 @@ from app.models.run import Run, RunStatus, Sweep
 # sweep_id -> {"running": bool, "current": case_id | None, "message": str}
 _sweep_state: dict[str, dict] = {}
 
+# Sweeping either of these moves the fan's operating point. The blade itself
+# must not move with it, or every point of the map would be a different machine.
+_TURBO_OPERATING = ("physics.reference.rpm", "physics.reference.axial_velocity")
+_DESIGN_PINS = {
+    "physics.reference.rpm": "geometry.parameters.design_rpm",
+    "physics.reference.axial_velocity": "geometry.parameters.design_axial_velocity",
+}
+
 
 def _set_nested(spec: dict, dotted_key: str, value) -> None:
     keys = dotted_key.split(".")
@@ -27,20 +36,81 @@ def _set_nested(spec: dict, dotted_key: str, value) -> None:
     node[keys[-1]] = value
 
 
+def _get_nested(spec: dict, dotted_key: str):
+    node = spec
+    for k in dotted_key.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(k)
+    return node
+
+
+def pin_design_point(spec: dict, parameters: list[str]) -> dict:
+    """Freeze the blade before sweeping the point it is run at.
+
+    The blade's twist is derived from RPM and through-flow. Sweep either without
+    pinning and the geometry — and so the mesh — changes at every point, which
+    is not a fan map but a series of different fans. Pinning records the base
+    case's own operating point as the design point, so one blade is carried
+    across the whole map and the mesh is built once per child.
+    """
+    pinned = {}
+    for parameter in parameters:
+        target = _DESIGN_PINS.get(parameter)
+        if target is None or _get_nested(spec, target) is not None:
+            continue
+        current = _get_nested(spec, parameter)
+        if current is not None:
+            _set_nested(spec, target, current)
+            pinned[target] = current
+    return pinned
+
+
+def _label(parameter: str, value) -> str:
+    return f"{parameter.split('.')[-1]}={value:g}" if isinstance(value, float) else \
+        f"{parameter.split('.')[-1]}={value}"
+
+
 def create_sweep(
-    session: Session, base_case_id: str, parameter: str, values: list, name: str
+    session: Session,
+    base_case_id: str,
+    parameter: str,
+    values: list,
+    name: str,
+    parameter2: str | None = None,
+    values2: list | None = None,
 ) -> Sweep:
     base = session.get(Case, base_case_id)
     if base is None:
         raise ValueError("base case not found")
+    if not values:
+        raise ValueError("a sweep needs at least one value")
+
+    axes = [parameter] + ([parameter2] if parameter2 else [])
+    grid = [(v, None) for v in values] if not parameter2 else [
+        (v, v2) for v in values for v2 in (values2 or [])
+    ]
+    if parameter2 and not values2:
+        raise ValueError("second parameter given without values")
+
+    # do this once, on a copy of the base spec, so every child inherits the same
+    # frozen blade rather than each pinning its own swept value
+    pinned_spec = copy.deepcopy(base.spec)
+    if base.domain == "turbo":
+        pin_design_point(pinned_spec, [a for a in axes if a in _TURBO_OPERATING])
 
     child_ids: list[str] = []
-    for v in values:
-        spec = copy.deepcopy(base.spec)
-        _set_nested(spec, parameter, v)
+    points: list[dict] = []
+    for value, value2 in grid:
+        spec = copy.deepcopy(pinned_spec)
+        _set_nested(spec, parameter, value)
+        label = _label(parameter, value)
+        if parameter2:
+            _set_nested(spec, parameter2, value2)
+            label += f", {_label(parameter2, value2)}"
         child = Case(
             id=uuid.uuid4().hex[:8],
-            name=f"{name} [{parameter.split('.')[-1]}={v}]",
+            name=f"{name} [{label}]",
             domain=base.domain,
             template_id=base.template_id,
             spec=spec,
@@ -48,6 +118,7 @@ def create_sweep(
         )
         session.add(child)
         child_ids.append(child.id)
+        points.append({"value": value, "value2": value2})
 
     sweep = Sweep(
         id=uuid.uuid4().hex[:8],
@@ -55,12 +126,23 @@ def create_sweep(
         base_case_id=base_case_id,
         parameter=parameter,
         values=values,
+        parameter2=parameter2,
+        values2=values2,
+        domain=base.domain,
+        points=points,
         case_ids=child_ids,
     )
     session.add(sweep)
     session.commit()
     session.refresh(sweep)
     return sweep
+
+
+def _points(sweep: Sweep) -> list[dict]:
+    """Per-child axis values, tolerating sweeps created before the second axis."""
+    if sweep.points:
+        return sweep.points
+    return [{"value": v, "value2": None} for v in sweep.values]
 
 
 def run_all(session: Session, sweep_id: str) -> dict:
@@ -153,9 +235,32 @@ def stop_all(sweep_id: str) -> dict:
     return _sweep_state.get(sweep_id, {"running": False})
 
 
-def status(session: Session, sweep_id: str) -> dict:
-    """Per-child status + coefficients, plus queue progress."""
+def _metrics(case: Case | None, case_dir, domain: str | None) -> dict:
+    """The numbers worth plotting for one child, by domain."""
     from app.parsers import forces
+    from app.services.post import fan
+
+    if domain == "turbo":
+        if case is None:
+            return {}
+        last = fan.performance(case_dir, case.spec)["latest"]
+        if not last:
+            return {}
+        return {
+            "flow_rate": last["flow_rate"],
+            "total_pressure_rise": last["total_pressure_rise"],
+            "efficiency": last["efficiency"],
+            "torque": last["torque"],
+            "shaft_power": last["shaft_power"],
+            "flow_coefficient": last["flow_coefficient"],
+            "pressure_coefficient": last["pressure_coefficient"],
+        }
+    last = forces.latest(case_dir)
+    return {"cl": last.cl, "cd": last.cd} if last else {}
+
+
+def status(session: Session, sweep_id: str) -> dict:
+    """Per-child status + its headline numbers, plus queue progress."""
     from app.services import case_service
 
     sweep = session.get(Sweep, sweep_id)
@@ -163,17 +268,15 @@ def status(session: Session, sweep_id: str) -> dict:
         raise ValueError("sweep not found")
 
     children = []
-    for value, cid in zip(sweep.values, sweep.case_ids):
+    for point, cid in zip(_points(sweep), sweep.case_ids):
         case = session.get(Case, cid)
-        last = forces.latest(case_service.case_dir(cid))
         children.append(
             {
                 "case_id": cid,
-                "value": value,
+                **point,
                 "name": case.name if case else cid,
                 "status": case.status.value if case else "missing",
-                "cl": last.cl if last else None,
-                "cd": last.cd if last else None,
+                **_metrics(case, case_service.case_dir(cid), sweep.domain),
             }
         )
     queue = _sweep_state.get(sweep_id, {"running": False, "current": None, "message": ""})
@@ -181,7 +284,9 @@ def status(session: Session, sweep_id: str) -> dict:
     return {
         "id": sweep.id,
         "name": sweep.name,
+        "domain": sweep.domain,
         "parameter": sweep.parameter,
+        "parameter2": sweep.parameter2,
         "children": children,
         "queue": queue,
         "done": done,
@@ -189,19 +294,32 @@ def status(session: Session, sweep_id: str) -> dict:
     }
 
 
-def polar(session: Session, sweep_id: str) -> dict:
-    """Aggregate child-case force coefficients into a polar (value -> Cl, Cd)."""
-    from app.parsers import forces
+def results(session: Session, sweep_id: str) -> dict:
+    """Aggregate the children into the curve or map this domain is plotted as.
+
+    aero  -> polar: the swept value against Cl and Cd.
+    turbo -> fan map: flow rate against total pressure rise and efficiency,
+             grouped into one series per value of the second axis (the RPM).
+    """
     from app.services import case_service
 
     sweep = session.get(Sweep, sweep_id)
     if sweep is None:
         raise ValueError("sweep not found")
+
     points = []
-    for value, cid in zip(sweep.values, sweep.case_ids):
-        last = forces.latest(case_service.case_dir(cid))
+    for point, cid in zip(_points(sweep), sweep.case_ids):
+        case = session.get(Case, cid)
         points.append(
-            {"value": value, "case_id": cid,
-             "cl": last.cl if last else None, "cd": last.cd if last else None}
+            {
+                **point,
+                "case_id": cid,
+                **_metrics(case, case_service.case_dir(cid), sweep.domain),
+            }
         )
-    return {"parameter": sweep.parameter, "points": points}
+    return {
+        "domain": sweep.domain,
+        "parameter": sweep.parameter,
+        "parameter2": sweep.parameter2,
+        "points": points,
+    }

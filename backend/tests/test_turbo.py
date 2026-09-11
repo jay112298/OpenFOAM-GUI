@@ -160,6 +160,75 @@ def test_more_blades_make_a_narrower_sector(tmp_path):
     assert twelve.n_t < six.n_t
 
 
+# --- design point vs operating point --------------------------------------
+
+
+def test_a_single_case_designs_for_the_point_it_runs():
+    p = AxialFanParams.from_spec(_spec())
+    assert not p.is_off_design()
+    assert p.blade_spec().rpm == p.operating_spec().rpm
+    st = derive(p)
+    # at the design point the incidence is flat at the requested value
+    assert all(abs(s.incidence - p.incidence) < 1e-9 for s in st.incidence_profile)
+
+
+def test_pinning_the_design_point_freezes_the_blade():
+    spec = _spec(
+        geometry__parameters__design_rpm=3000.0,
+        geometry__parameters__design_axial_velocity=12.0,
+        physics__reference__rpm=2400.0,
+        physics__reference__axial_velocity=6.0,
+    )
+    p = AxialFanParams.from_spec(spec)
+    assert p.is_off_design()
+    # geometry follows the design point...
+    assert p.blade_spec().rpm == 3000.0 and p.blade_spec().axial_velocity == 12.0
+    # ...while the case is run at the operating point
+    st = derive(p)
+    assert abs(st.shaft_omega - 2400 * math.pi / 30) < 1e-9
+    assert abs(st.tip_speed - st.shaft_omega * p.tip_radius) < 1e-9
+    assert abs(st.flow_coefficient - 6.0 / st.tip_speed) < 1e-9
+
+
+def test_throttling_the_fan_raises_the_incidence():
+    """Less flow at the same speed means the flow arrives more tangentially,
+    so it meets the fixed blade at a larger angle. That is how a fan stalls."""
+    design = dict(geometry__parameters__design_rpm=3000.0,
+                  geometry__parameters__design_axial_velocity=12.0,
+                  physics__reference__rpm=3000.0)
+    throttled = derive(AxialFanParams.from_spec(
+        _spec(**design, physics__reference__axial_velocity=6.0)))
+    opened = derive(AxialFanParams.from_spec(
+        _spec(**design, physics__reference__axial_velocity=18.0)))
+
+    assert throttled.peak_incidence.incidence > 4.0    # above the design 4 deg
+    assert opened.peak_incidence.incidence < 4.0       # below it, toward negative
+    assert throttled.peak_incidence.incidence > opened.peak_incidence.incidence
+
+
+def test_the_blade_metal_angles_do_not_move_off_design():
+    """Whatever the operating point, `sections` describes the blade as cut."""
+    at_design = derive(AxialFanParams.from_spec(_spec()))
+    off = derive(AxialFanParams.from_spec(_spec(
+        geometry__parameters__design_rpm=3000.0,
+        geometry__parameters__design_axial_velocity=12.0,
+        physics__reference__axial_velocity=6.0,
+    )))
+    assert [s.stagger for s in at_design.sections] == [s.stagger for s in off.sections]
+
+
+def test_off_design_incidence_is_reported_and_warned_about():
+    report = preflight_report(_spec(
+        geometry__parameters__design_rpm=3000.0,
+        geometry__parameters__design_axial_velocity=12.0,
+        physics__reference__axial_velocity=3.0,       # deeply throttled
+    ))
+    finding = _finding(report, "incidence")
+    assert finding["severity"] == "warn"
+    assert "Off design" in finding["message"]
+    assert report["can_run"] is True   # a real point on the map, just a rough one
+
+
 # --- validation rules -----------------------------------------------------
 
 
@@ -265,3 +334,21 @@ def test_fan_performance_scales_one_passage_to_the_machine(tmp_path):
 
 def test_fan_performance_is_empty_without_a_run(tmp_path):
     assert fan.performance(tmp_path, _spec())["latest"] is None
+
+
+def test_efficiency_is_undefined_past_free_delivery(tmp_path):
+    """Beyond free delivery dp0 goes negative while shaft power crosses zero;
+    air/shaft is then a ratio of two things that no longer mean efficiency."""
+    _write_series(tmp_path, "flowRate", [(100, "-0.1")])
+    _write_series(tmp_path, "p0Inlet", [(100, "100")])
+    _write_series(tmp_path, "p0Outlet", [(100, "-50")])      # a pressure drop
+    _write_series(tmp_path, "outletU", [(100, "(0 1 12)")])
+    moment = tmp_path / "postProcessing" / "bladeForces" / "0"
+    moment.mkdir(parents=True)
+    (moment / "moment.dat").write_text("# Time\ttotal\n100\t0 0 -0.001\n")
+
+    last = fan.performance(tmp_path, _spec())["latest"]
+    assert last["total_pressure_rise"] < 0
+    assert last["efficiency"] is None
+    # the raw powers are still reported — only the ratio is withheld
+    assert last["air_power"] < 0 and last["shaft_power"] > 0

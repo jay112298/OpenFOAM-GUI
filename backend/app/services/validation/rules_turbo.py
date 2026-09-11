@@ -114,7 +114,7 @@ def solidity_range(ctx: "ValidationContext") -> Finding | None:
 
 def flow_coefficient(ctx: "ValidationContext") -> Finding | None:
     """Through-flow versus tip speed — where the machine sits on its own map."""
-    phi = ctx.derived.blade.flow_coefficient
+    phi = ctx.derived.flow_coefficient
     if phi < 0.05:
         return Finding(
             "flow-coefficient", Severity.fail,
@@ -133,16 +133,45 @@ def flow_coefficient(ctx: "ValidationContext") -> Finding | None:
 
 
 def incidence_range(ctx: "ValidationContext") -> Finding | None:
-    i = ctx.params.incidence
-    if abs(i) > 12:
+    """Incidence the blade actually sees — at design, or off it.
+
+    The blade metal angles are fixed when it is cut. Throttle the machine or
+    change its speed and the flow arrives from somewhere else, so the incidence
+    moves. Far enough and the section separates, which is stall on one side and
+    a windmilling blade on the other; steady RANS represents neither well.
+    """
+    d = ctx.derived
+    worst = d.peak_incidence
+    if worst is None:
+        return None
+
+    if not d.off_design:
+        i = ctx.params.incidence
+        if abs(i) > 12:
+            return Finding(
+                "incidence", Severity.warn,
+                f"Design incidence {i:g}° is large; the section is likely to separate.",
+                "Axial rotors are usually set between 0° and 8° incidence.",
+            )
+        return Finding("incidence", Severity.ok,
+                       f"Blade set at {i:g}° incidence to the relative inflow at every radius.")
+
+    where = f"at r = {worst.radius:.3f} m"
+    if abs(worst.incidence) > 15:
         return Finding(
             "incidence", Severity.warn,
-            f"Design incidence {i:g}° is large; the section is likely to separate and steady "
-            "RANS will not represent that well.",
-            "Axial rotors are usually set between 0° and 8° incidence.",
+            f"Off design: the blade meets the flow at {worst.incidence:+.1f}° {where} "
+            f"(it was cut for {ctx.params.incidence:g}°). "
+            + ("That is deep stall territory." if worst.incidence > 0
+               else "That far negative the blade is being driven, not driving."),
+            "Expect separated flow and a pessimistic, poorly converged answer — it is a real "
+            "point on the map, but read it as qualitative.",
         )
-    return Finding("incidence", Severity.ok,
-                   f"Blade set at {i:g}° incidence to the relative inflow at every radius.")
+    return Finding(
+        "incidence", Severity.ok,
+        f"Off design at {ctx.params.rpm:g} rpm / {ctx.params.axial_velocity:g} m/s: incidence "
+        f"reaches {worst.incidence:+.1f}° {where}, still in the attached range.",
+    )
 
 
 def periodic_sector(ctx: "ValidationContext") -> Finding | None:

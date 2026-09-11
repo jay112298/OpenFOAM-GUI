@@ -41,6 +41,15 @@ Pipeline pattern, identical for every domain (aero/turbo/engine):
 - **Units**: convert at the API boundary (`app/services/units`). Everything
   internal is strict SI. Turbulence inlet values are always computed, never
   hand-typed.
+- **Sweeps** (`app/services/sweeps_service.py`): one base case fanned out over
+  one parameter (a curve) or two (a grid). For turbo, geometry is derived from
+  the operating point, so sweeping RPM or through-flow first *pins* the design
+  point (`geometry.parameters.design_rpm` / `design_axial_velocity`) — without
+  that the blade is re-cut at every point and the map describes a different fan
+  at each mark. Anything that derives geometry from an operating condition must
+  do the same.
+- **Schema changes**: there is no migration tool. `db.init_db()` adds columns
+  missing from existing tables; new columns must therefore be nullable.
 - **Post-processing**: PyVista server-side; ship decimated extracts to VTK.js,
   never full volume meshes.
 
